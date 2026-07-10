@@ -12,7 +12,6 @@ type ActiveScreen = 'dashboard' | 'cycle-details' | 'operation-hub' | 'settings'
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('dashboard');
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
-  const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [activeMeeting, setActiveMeeting] = useState<Meeting | null>(null);
   const [loadingOperation, setLoadingOperation] = useState(false);
   const [managementYear, setManagementYear] = useState(2026);
@@ -29,7 +28,6 @@ export default function App() {
    * Initie les opérations pour une instance donnée via Supabase.
    */
   const handleStartOperation = async (meetingId: string) => {
-    setSelectedMeetingId(meetingId);
     setLoadingOperation(true);
 
     const { data, error } = await supabase
@@ -55,7 +53,6 @@ export default function App() {
   const resetToHome = () => {
     setCurrentScreen('dashboard');
     setSelectedCycleId(null);
-    setSelectedMeetingId(null);
     setActiveMeeting(null);
   };
 
