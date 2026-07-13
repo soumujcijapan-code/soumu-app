@@ -158,7 +158,7 @@ export const CycleDetails: React.FC<CycleDetailsProps> = ({ cycleId, onBack, onS
               {/* ZONE GAUCHE : DONNÉES & ÉDITION */}
               <div>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: m.type === 'RIJIKAI' ? '#0B1F3A' : '#f1f5f9', color: m.type === 'RIJIKAI' ? '#F5C842' : '#475569', borderRadius: '6px', fontSize: '11px', fontWeight: '900' }}>
+                  <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: m.type === 'RIJIKAI' ? '#eef2ff' : '#f1f5f9', color: m.type === 'RIJIKAI' ? '#4338ca' : '#475569', borderRadius: '6px', fontSize: '11px', fontWeight: '800' }}>
                     {PART_LABELS[m.type]}
                   </div>
                   <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: strategyColor.bg, color: strategyColor.text, borderRadius: '6px', fontSize: '11px', fontWeight: 'bold' }}>
@@ -237,7 +237,7 @@ export const CycleDetails: React.FC<CycleDetailsProps> = ({ cycleId, onBack, onS
                 {m.type === 'RIJIKAI' && (
                   <button
                     onClick={() => onStartOperation(m.id)}
-                    style={{ padding: '16px 12px', backgroundColor: '#0B1F3A', color: '#F5C842', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '900', cursor: 'pointer', boxShadow: '0 4px 12px rgba(11, 31, 58, 0.25)', transition: 'transform 0.1s' }}
+                    style={{ padding: '16px 12px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0, 163, 224, 0.3)', transition: 'transform 0.1s' }}
                     onMouseDown={e => e.currentTarget.style.transform = 'scale(0.98)'}
                     onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
                   >

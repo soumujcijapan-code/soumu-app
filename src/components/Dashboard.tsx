@@ -117,7 +117,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 900, color: '#0B1F3A', letterSpacing: '0.3px' }}>会議サイクル管理</h2>
-          <p style={{ margin: '4px 0 0 0', fontSize: '14px', color: '#64748b' }}>総務委員会による会議サイクルの一元管理。</p>
+          <p style={{ margin: '6px 0 0 0', fontSize: '14px', color: '#64748b', lineHeight: 1.6 }}>総務委員会による会議サイクルの一元管理。</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -138,7 +138,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'; }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: '#0B1F3A', color: '#F5C842', borderRadius: '6px', fontSize: '11px', fontWeight: '900', letterSpacing: '0.5px' }}>
+              <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: '#eef2ff', color: '#4338ca', borderRadius: '6px', fontSize: '11px', fontWeight: '800', letterSpacing: '0.3px' }}>
                 {cycle.year}年度
               </div>
               <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'bold' }}>{cycle.month}月</div>
@@ -246,7 +246,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
                 <button type="button" onClick={() => setShowModal(false)} style={{ padding: '10px 20px', backgroundColor: '#f1f5f9', color: '#64748b', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
                   キャンセル
                 </button>
-                <button type="submit" disabled={loading} style={{ padding: '10px 24px', backgroundColor: '#0B1F3A', color: '#F5C842', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer' }}>
+                <button type="submit" disabled={loading} style={{ padding: '10px 24px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0, 163, 224, 0.25)' }}>
                   {loading ? '登録処理中...' : `⚡ ${cycleTitle} を開始`}
                 </button>
               </div>

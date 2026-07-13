@@ -83,6 +83,25 @@ export interface Attendance {
   updated_at: string;
 }
 
+// --- CONTRAT POUR LE PLAN DE SALLE BRUT (座席プラン) ---
+// Reflète les règles du CSV telles quelles, indépendamment de qui occupe réellement
+// chaque siège — nécessaire pour afficher les places "prévues mais non réservées" (blanc)
+// dans le plan de salle.
+
+export type SeatPlanRole = 'PRESIDENT' | 'MEMBER';
+export type SeatPlanTargetType = 'LOM' | 'BLOCK_DISTRICT' | 'NONE';
+
+export interface SeatPlanRule {
+  id: string;
+  meeting_id: string;
+  role: SeatPlanRole;
+  target_type: SeatPlanTargetType;
+  target_name: string | null;
+  start_seat: string;
+  end_seat: string | null;
+  created_at: string;
+}
+
 // --- CONTRAT POUR LA GESTION DES ÉQUIPEMENTS (備品管理) ---
 // Indépendant des cycles de réunion : un inventaire par TYPE de réunion,
 // pas par instance datée.

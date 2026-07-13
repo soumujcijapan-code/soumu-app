@@ -60,26 +60,26 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
 
   if (!activeMeeting) {
     return (
-      <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '12px', border: '1px solid #334155', color: '#64748b', textAlign: 'center', fontStyle: 'italic' }}>
+      <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#94a3b8', textAlign: 'center', fontStyle: 'italic' }}>
         対象の会議が選択されていません。読み上げ表を作成するには会議を選択してください。
       </div>
     );
   }
 
   return (
-    <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '12px', border: '1px solid #334155', maxWidth: '800px', margin: '0 auto' }}>
+    <div>
 
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #334155', paddingBottom: '16px' }}>
-        <h3 style={{ margin: 0, color: '#fff' }}>📜 読み上げ表</h3>
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '16px' }}>読み上げ表</h3>
         <button
           onClick={() => window.print()}
-          style={{ padding: '12px 24px', backgroundColor: '#10b981', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+          style={{ padding: '10px 20px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}
         >
-          🖨️ 印刷する
+          印刷する
         </button>
       </div>
 
-      {/* LE DOCUMENT IMPRIMABLE (Dissimule l'interface web lors de l'impression) */}
+      {/* この画面表示は印刷結果とまったく同じ見た目にしてある（別デザインを持たない） */}
       <div className="print-document">
         <style>{`
           @media print {
@@ -90,20 +90,22 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
               left: 0;
               top: 0;
               width: 100%;
-              background: #fff !important;
-              color: #000 !important;
+              max-width: none;
               padding: 20px;
             }
             .no-print { display: none !important; }
             .page-break { page-break-inside: avoid; }
           }
           .print-document {
-            background-color: #f8fafc;
+            background-color: #fff;
             color: #0f172a;
             padding: 40px;
             border-radius: 8px;
+            border: 1px solid #e2e8f0;
             font-family: "Yu Mincho", "MS Mincho", serif;
             line-height: 1.8;
+            max-width: 700px;
+            margin: 0 auto;
           }
           .intro-text {
             font-size: 18px;

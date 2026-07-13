@@ -279,6 +279,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
       }
 
       const updatesMap = new Map<string, { assigned_seat?: string, member_seat_range?: string }>();
+      const seatPlanRows: any[] = [];
       const usedSeats = new Set<string>();
       (existingAtt || []).forEach(a => {
         if (a.checked_in && a.assigned_seat) usedSeats.add(a.assigned_seat);
@@ -341,20 +342,44 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
       for (const rule of specificRules) {
         const { targetName, role, startSeat, endSeat, lineNum } = rule;
 
-        const targets = (assignableParts as any[]).filter(p => {
+        const matchesLomName = (p: any) => {
           const lom = Array.isArray(p.loms) ? p.loms[0] : p.loms;
           if (!lom) return false;
-          return lom.name === targetName ||
-                 stripLomSuffix(lom.name) === targetName ||
-                 lom.block === targetName ||
-                 lom.region === targetName;
-        });
+          return lom.name === targetName || stripLomSuffix(lom.name) === targetName;
+        };
+        const matchesBlockOrRegion = (p: any) => {
+          const lom = Array.isArray(p.loms) ? p.loms[0] : p.loms;
+          if (!lom) return false;
+          return lom.block === targetName || lom.region === targetName;
+        };
+
+        // LOM名の指定が優先。LOM名では一致せず、ブロック／地区としてのみ一致する場合は
+        // 「ブロック・地区指定」として扱う（個別の座席を特定の人に割り当てない）。
+        const lomNameTargets = (assignableParts as any[]).filter(matchesLomName);
+        const blockTargets = (assignableParts as any[]).filter(matchesBlockOrRegion);
+        const targets = lomNameTargets.length > 0 ? lomNameTargets : blockTargets;
+        const isBlockLevelTarget = lomNameTargets.length === 0 && blockTargets.length > 0;
 
         if (targets.length === 0) {
-          addLog(`⚠️ ${lineNum}行目：「${targetName}」に一致するLOM／ブロック／地区が見つかりません（表記を確認してください）。`);
+          // 診断を改善：全く一致しないのか、一致はするが全員受付済みで除外されているのかを区別する。
+          const anyMatchInFullRoster = (dbParts as any[]).some(p => matchesLomName(p) || matchesBlockOrRegion(p));
+          if (anyMatchInFullRoster) {
+            addLog(`⚠️ ${lineNum}行目：「${targetName}」に一致するLOM／ブロック／地区は見つかりましたが、該当者は全員すでに受付済みのため対象から除外されています（座席は変更されません）。`);
+          } else {
+            addLog(`⚠️ ${lineNum}行目：「${targetName}」に一致するLOM／ブロック／地区が見つかりません（表記を確認してください）。`);
+          }
           continue;
         }
         matchedRows++;
+
+        seatPlanRows.push({
+          meeting_id: targetMeetingId,
+          role: isPresidentRole(role) ? 'PRESIDENT' : 'MEMBER',
+          target_type: isBlockLevelTarget ? 'BLOCK_DISTRICT' : 'LOM',
+          target_name: targetName,
+          start_seat: startSeat,
+          end_seat: endSeat || null,
+        });
 
         // 席次に基づく決定論的な並び替え
         targets.sort((a, b) => {
@@ -364,29 +389,46 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
         });
 
         if (isPresidentRole(role)) {
-          // 個別の椅子を割り当て
-          const availableSeats = generateSeatRange(startSeat, endSeat).filter(s => !usedSeats.has(s));
-          let seatIndex = 0;
+          if (isBlockLevelTarget) {
+            // ブロック／地区指定：特定のLOM／個人には一切紐付けない。
+            // 座席プラン（seat_plan_rules）にはすでに記録済みなので、ここでは
+            // 個々の参加者の行には何も書き込まない（書き込むと、そのブロックに属する
+            // 全LOMの受付データに同じ範囲が重複して表示されてしまう）。
+            const rangeStr = endSeat ? `${startSeat} ~ ${endSeat}` : startSeat;
+            generateSeatRange(startSeat, endSeat).forEach(s => usedSeats.add(s)); // 他のルールに使わせない
+            addLog(`ℹ️ ${lineNum}行目：「${targetName}」（ブロック／地区）→ ${rangeStr} を確保（特定のLOMには紐付けません。実際の割り振りは受付時に確認してください）。`);
+          } else {
+            // LOM名を直接指定：個別の椅子を割り当て
+            const availableSeats = generateSeatRange(startSeat, endSeat).filter(s => !usedSeats.has(s));
+            let seatIndex = 0;
 
-          for (const p of targets) {
-            if (!assignedPresidents.has(p.id) && seatIndex < availableSeats.length) {
-              const assigned = availableSeats[seatIndex];
-              if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
-              updatesMap.get(p.id)!.assigned_seat = assigned;
+            for (const p of targets) {
+              if (!assignedPresidents.has(p.id) && seatIndex < availableSeats.length) {
+                const assigned = availableSeats[seatIndex];
+                if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
+                updatesMap.get(p.id)!.assigned_seat = assigned;
 
-              usedSeats.add(assigned);
-              assignedPresidents.add(p.id);
-              seatIndex++;
+                usedSeats.add(assigned);
+                assignedPresidents.add(p.id);
+                seatIndex++;
+              }
             }
           }
         } else if (isMemberRole(role)) {
-          // グループ用のエリアを割り当て
-          const rangeStr = endSeat ? `${startSeat} ~ ${endSeat}` : startSeat;
-          for (const p of targets) {
-            if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
-            // 最初に一致したルール（上にあるほど優先）がエリアを確定する
-            if (!updatesMap.get(p.id)!.member_seat_range) {
-              updatesMap.get(p.id)!.member_seat_range = rangeStr;
+          if (isBlockLevelTarget) {
+            // ブロック／地区指定：特定の個人（LOM）に紐付けない。座席プラン（seat_plan_rules）
+            // に記録済みなので、ここでは個々の参加者の行には何も書き込まない
+            // （書き込むと「メンバーエリア一覧」に同じ範囲がLOMの数だけ重複表示されてしまう）。
+            addLog(`ℹ️ ${lineNum}行目：「${targetName}」（ブロック／地区）のメンバーエリアとして ${startSeat}${endSeat ? ' ~ ' + endSeat : ''} を確保（特定のLOMには紐付けません）。`);
+          } else {
+            // LOM名を直接指定：そのLOMのグループ用エリアとして割り当て
+            const rangeStr = endSeat ? `${startSeat} ~ ${endSeat}` : startSeat;
+            for (const p of targets) {
+              if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
+              // 最初に一致したルール（上にあるほど優先）がエリアを確定する
+              if (!updatesMap.get(p.id)!.member_seat_range) {
+                updatesMap.get(p.id)!.member_seat_range = rangeStr;
+              }
             }
           }
         } else {
@@ -394,67 +436,47 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
         }
       }
 
-      // --- パス2：一般ルール（A列が空）＝ パス1で未割当のまま残っている全員が対象。
-      //     ファイル内の記載順で処理し、同じ「残り」プールを続けて消費する
-      //     （連続する2行の一般ルールは、続けて同じ残りの人たちを配置する）。
-      const remainingPresidents = (assignableParts as any[])
-        .filter(p => !assignedPresidents.has(p.id))
-        .sort((a, b) => {
-          const lomA = Array.isArray(a.loms) ? a.loms[0] : a.loms;
-          const lomB = Array.isArray(b.loms) ? b.loms[0] : b.loms;
-          return (lomA?.sort_priority || 50) - (lomB?.sort_priority || 50);
-        });
-
-      const remainingMembers = (assignableParts as any[])
-        .filter(p => !updatesMap.get(p.id)?.member_seat_range)
-        .sort((a, b) => {
-          const lomA = Array.isArray(a.loms) ? a.loms[0] : a.loms;
-          const lomB = Array.isArray(b.loms) ? b.loms[0] : b.loms;
-          return (lomA?.sort_priority || 50) - (lomB?.sort_priority || 50);
-        });
-
+      // --- パス2：一般ルール（A列が空）＝「予約なし」を意味する。
+      //     当日飛び入りで来る理事長・メンバー用の枠であり、事前に人を割り当てることは
+      //     絶対にしない（誰が来るか分からないため）。座席プランには記録し、
+      //     座席マップで「白（未定）」として表示できるようにする。
       for (const rule of catchAllRules) {
         const { role, startSeat, endSeat, lineNum } = rule;
 
-        if (isPresidentRole(role)) {
-          const availableSeats = generateSeatRange(startSeat, endSeat).filter(s => !usedSeats.has(s));
-          let seatIndex = 0;
-          let placed = 0;
-
-          while (seatIndex < availableSeats.length && remainingPresidents.length > 0) {
-            const p = remainingPresidents.shift()!;
-            const assigned = availableSeats[seatIndex];
-            if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
-            updatesMap.get(p.id)!.assigned_seat = assigned;
-
-            usedSeats.add(assigned);
-            assignedPresidents.add(p.id);
-            seatIndex++;
-            placed++;
-          }
-          addLog(`🌐 ${lineNum}行目（一般ルール、${startSeat}${endSeat ? ' ~ ' + endSeat : ''}）：残りの理事長 ${placed} 名を配置しました。`);
-          matchedRows++;
-        } else if (isMemberRole(role)) {
-          const rangeStr = endSeat ? `${startSeat} ~ ${endSeat}` : startSeat;
-          let placed = 0;
-          while (remainingMembers.length > 0) {
-            const p = remainingMembers.shift()!;
-            if (!updatesMap.has(p.id)) updatesMap.set(p.id, {});
-            updatesMap.get(p.id)!.member_seat_range = rangeStr;
-            placed++;
-          }
-          addLog(`🌐 ${lineNum}行目（一般ルール、${rangeStr}）：残りのメンバー ${placed} 名をエリアに割り当てました。`);
-          matchedRows++;
-        } else {
+        if (!isPresidentRole(role) && !isMemberRole(role)) {
           addLog(`⚠️ ${lineNum}行目：役割「${role}」を認識できません（想定：理事長／メンバー）。`);
+          continue;
         }
+
+        seatPlanRows.push({
+          meeting_id: targetMeetingId,
+          role: isPresidentRole(role) ? 'PRESIDENT' : 'MEMBER',
+          target_type: 'NONE',
+          target_name: null,
+          start_seat: startSeat,
+          end_seat: endSeat || null,
+        });
+
+        addLog(`ℹ️ ${lineNum}行目（予約なし、${startSeat}${endSeat ? ' ~ ' + endSeat : ''}）：当日飛び入り用の枠として記録しました（自動割当はしません）。`);
+        matchedRows++;
       }
 
-      if (remainingPresidents.length > 0) {
-        addLog(`⚠️ ${remainingPresidents.length} 名の理事長が未配置です（座席範囲が不足しているか、ファイルに記載がありません）。`);
+      // 3. 座席プランを保存（このミーティングの既存プランを一旦削除してから、
+      //    最新のCSV内容で総入れ替えする）。「予約なし」の枠も含めて丸ごと記録する。
+      const { error: deletePlanError } = await supabase
+        .from('seat_plan_rules')
+        .delete()
+        .eq('meeting_id', targetMeetingId);
+      if (deletePlanError) throw deletePlanError;
+
+      if (seatPlanRows.length > 0) {
+        const { error: planInsertError } = await supabase
+          .from('seat_plan_rules')
+          .insert(seatPlanRows);
+        if (planInsertError) throw planInsertError;
       }
 
-      // 3. attendances へ upsert（対象会議に限定）。assigned_seat / member_seat_range
+      // 4. attendances へ upsert（対象会議に限定）。assigned_seat / member_seat_range
       //    のみを送信し、checked_in や has_omiyage など他の項目は変更しない。
       if (updatesMap.size > 0) {
         addLog(`集計完了。${updatesMap.size} 件の配置情報をサーバーへ送信しています...`);
@@ -476,7 +498,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
           throw upsertError;
         }
 
-        addLog(`✅ ${activeYear}年度の座席配置が確定しました！（${matchedRows}/${csvRows.length - 1} 行を反映）`);
+        addLog(`✅ ${activeYear}年度の座席配置が確定しました！（${matchedRows}/${csvRows.length - 1} 行を反映、うち予約なし ${catchAllRules.length} 行）`);
       } else {
         addLog(`⚠️ ファイル内のルールに一致する参加者がいませんでした（0/${csvRows.length - 1} 行）。上記のログで詳細をご確認ください。`);
       }

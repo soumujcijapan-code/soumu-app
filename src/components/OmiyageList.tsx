@@ -59,35 +59,36 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
 
   if (!activeMeeting) {
     return (
-      <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '12px', border: '1px solid #334155', color: '#64748b', textAlign: 'center', fontStyle: 'italic' }}>
+      <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#94a3b8', textAlign: 'center', fontStyle: 'italic' }}>
         対象の会議が選択されていません。
       </div>
     );
   }
 
   return (
-    <div style={{ color: '#fff' }}>
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-        <h4 style={{ margin: 0, color: '#f59e0b' }}>🎁 お土産管理簿</h4>
-        <button onClick={() => window.print()} style={{ padding: '6px 12px', backgroundColor: '#f59e0b', border: 'none', borderRadius: '4px', color: '#0f172a', fontWeight: 'bold', cursor: 'pointer' }}>🖨️ 一覧を印刷</button>
+    <div>
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h4 style={{ margin: 0, color: '#0B1F3A', fontSize: '16px' }}>お土産管理簿</h4>
+        <button onClick={() => window.print()} style={{ padding: '10px 20px', backgroundColor: '#00A3E0', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}>一覧を印刷</button>
       </div>
 
       <style>{`
         @media print {
           body * { visibility: hidden; }
           .print-area, .print-area * { visibility: visible; }
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; color: #000 !important; background: #fff !important; }
+          .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
           .no-print { display: none !important; }
         }
       `}</style>
 
-      <div className="print-area" style={{ backgroundColor: '#0f172a', padding: '16px', borderRadius: '8px', border: '1px solid #334155' }}>
-        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', textAlign: 'center' }}>
+      {/* この画面表示は印刷結果とまったく同じ見た目にしてある（別デザインを持たない） */}
+      <div className="print-area" style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', textAlign: 'center', color: '#0f172a' }}>
           {activeMeeting.location_name}（{activeMeeting.meeting_date}） お土産受領一覧
         </h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', color: '#0f172a' }}>
           <thead>
-            <tr style={{ borderBottom: '2px solid #475569' }}>
+            <tr style={{ borderBottom: '2px solid #cbd5e1' }}>
               <th style={{ padding: '8px', textAlign: 'left' }}>LOM（所属）</th>
               <th style={{ padding: '8px', textAlign: 'left' }}>氏名</th>
               <th style={{ padding: '8px', textAlign: 'left' }}>お店</th>
@@ -96,16 +97,16 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
           </thead>
           <tbody>
             {gifts.map(g => (
-              <tr key={g.id} style={{ borderBottom: '1px solid #1e293b' }}>
+              <tr key={g.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ padding: '8px' }}>{g.loms?.name}</td>
                 <td style={{ padding: '8px', fontWeight: 'bold' }}>{g.last_name} {g.first_name}</td>
-                <td style={{ padding: '8px', color: '#f59e0b' }}>{g.omiyage_shop || '—'}</td>
+                <td style={{ padding: '8px', color: '#b45309' }}>{g.omiyage_shop || '—'}</td>
                 <td style={{ padding: '8px' }}>{g.omiyage_item || '—'}</td>
               </tr>
             ))}
             {gifts.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ padding: '24px', textAlign: 'center', color: '#64748b', fontStyle: 'italic' }}>現時点で登録されているお土産はありません。</td>
+                <td colSpan={4} style={{ padding: '24px', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>現時点で登録されているお土産はありません。</td>
               </tr>
             )}
           </tbody>
