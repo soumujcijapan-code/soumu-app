@@ -82,3 +82,21 @@ export interface Attendance {
   created_at: string;
   updated_at: string;
 }
+
+// --- CONTRAT POUR LA GESTION DES ÉQUIPEMENTS (備品管理) ---
+// Indépendant des cycles de réunion : un inventaire par TYPE de réunion,
+// pas par instance datée.
+
+export type EquipmentCategory = 'SEIFUKU' | 'JOUNIN' | 'RIJIKAI' | 'SOUKAI' | 'KYOTO_KAIGI' | 'SUMMER_CON';
+export type EquipmentLocation = 'OFFICE' | 'VENUE' | 'SAITAMA_WAREHOUSE' | 'MEMBER' | 'UNKNOWN';
+
+export interface Equipment {
+  id: string;
+  category: EquipmentCategory;
+  name: string;
+  quantity: number;
+  location: EquipmentLocation;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}

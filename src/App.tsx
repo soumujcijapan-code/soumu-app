@@ -3,11 +3,12 @@ import { Dashboard } from './components/Dashboard';
 import { CycleDetails } from './components/CycleDetails';
 import { CheckInConsole } from './components/CheckInConsole';
 import { SystemSettings } from './components/SystemSettings';
+import { EquipmentManager } from './components/EquipmentManager.tsx';
 import { supabase } from './supabaseClient';
 import type { Meeting } from './types';
-import { LayoutDashboard, Settings } from 'lucide-react';
+import { LayoutDashboard, Settings, Package } from 'lucide-react';
 
-type ActiveScreen = 'dashboard' | 'cycle-details' | 'operation-hub' | 'settings';
+type ActiveScreen = 'dashboard' | 'cycle-details' | 'operation-hub' | 'settings' | 'equipment';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('dashboard');
@@ -196,6 +197,26 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setCurrentScreen('equipment')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  backgroundColor: currentScreen === 'equipment' ? '#e0f2fe' : 'transparent',
+                  color: currentScreen === 'equipment' ? '#00A3E0' : '#475569'
+                }}
+              >
+                <Package className="w-4 h-4" />
+                <span>備品管理</span>
+              </button>
+
+              <button
                 onClick={() => setCurrentScreen('settings')}
                 style={{
                   display: 'flex',
@@ -279,6 +300,10 @@ export default function App() {
 
         {currentScreen === 'settings' && (
           <SystemSettings activeYear={managementYear} />
+        )}
+
+        {currentScreen === 'equipment' && (
+          <EquipmentManager />
         )}
       </main>
     </div>
