@@ -18,44 +18,64 @@ interface Props {
 export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
   const [gifts, setGifts] = useState<GiftRow[]>([]);
 
+  const fetchGifts = async () => {
+    if (!activeMeeting) {
+      setGifts([]);
+      return;
+    }
+
+    // has_omiyage / omiyage_shop / omiyage_item ne sont plus sur `participants` :
+    // ils vivent dans `attendances`, scoppés à ce meeting_id précis.
+    const { data, error } = await supabase
+      .from('attendances')
+      .select('omiyage_shop, omiyage_item, participants!inner(id, last_name, first_name, loms(name))')
+      .eq('meeting_id', activeMeeting.id)
+      .eq('has_omiyage', true);
+
+    if (error || !data) {
+      console.error(error);
+      setGifts([]);
+      return;
+    }
+
+    const rows: GiftRow[] = (data as any[]).map(row => {
+      const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants;
+      return {
+        id: participant?.id,
+        last_name: participant?.last_name || '',
+        first_name: participant?.first_name || '',
+        omiyage_shop: row.omiyage_shop,
+        omiyage_item: row.omiyage_item,
+        loms: Array.isArray(participant?.loms) ? participant?.loms[0] : participant?.loms,
+      };
+    });
+
+    setGifts(rows);
+  };
+
   useEffect(() => {
-    const fetchGifts = async () => {
-      if (!activeMeeting) {
-        setGifts([]);
-        return;
-      }
-
-      // has_omiyage / omiyage_shop / omiyage_item ne sont plus sur `participants` :
-      // ils vivent dans `attendances`, scoppés à ce meeting_id précis.
-      const { data, error } = await supabase
-        .from('attendances')
-        .select('omiyage_shop, omiyage_item, participants!inner(id, last_name, first_name, loms(name))')
-        .eq('meeting_id', activeMeeting.id)
-        .eq('has_omiyage', true);
-
-      if (error || !data) {
-        console.error(error);
-        setGifts([]);
-        return;
-      }
-
-      const rows: GiftRow[] = (data as any[]).map(row => {
-        const participant = Array.isArray(row.participants) ? row.participants[0] : row.participants;
-        return {
-          id: participant?.id,
-          last_name: participant?.last_name || '',
-          first_name: participant?.first_name || '',
-          omiyage_shop: row.omiyage_shop,
-          omiyage_item: row.omiyage_item,
-          loms: Array.isArray(participant?.loms) ? participant?.loms[0] : participant?.loms,
-        };
-      });
-
-      setGifts(rows);
-    };
-
     fetchGifts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMeeting]);
+
+  // 他の受付端末での変更（お土産の申告・取消など）をリアルタイムで反映する
+  useEffect(() => {
+    if (!activeMeeting) return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { fetchGifts(); }, 400);
+    };
+    const channel = supabase
+      .channel(`omiyage-${activeMeeting.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendances', filter: `meeting_id=eq.${activeMeeting.id}` }, scheduleRefresh)
+      .subscribe();
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMeeting?.id]);
 
   if (!activeMeeting) {
     return (

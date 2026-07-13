@@ -168,6 +168,13 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeYear, activeMeeting]);
 
+  // オンタブ切り替え時にも最新データを取得する（他のタブで受付した内容が
+  // すぐ反映されるように）。
+  useEffect(() => {
+    fetchRoster();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
   // ---------------- SYNCHRONISATION MULTI-POSTE (TEMPS RÉEL) ----------------
   // Quand un autre poste d'accueil modifie une ligne d'émargement pour CETTE
   // réunion (check-in, annulation, import topologique...), on se resynchronise
