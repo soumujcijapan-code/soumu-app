@@ -160,7 +160,7 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
                     <td style={{ border: '1px solid #000', padding: '4px', textAlign: 'center', width: '10%' }}></td>
                   </tr>
                   <tr style={{ fontSize: '15px' }}>
-                    <td style={{ border: '1px solid #000', padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{p.loms?.name || '—'} 青年会議所</td>
+                    <td style={{ border: '1px solid #000', padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{p.loms?.name || '—'}</td>
                     <td style={{ border: '1px solid #000', padding: '8px', textAlign: 'center' }}>理事長</td>
                     <td style={{ border: '1px solid #000', padding: '8px 12px', textAlign: 'left', fontWeight: 'bold' }}>{p.last_name} {p.first_name}</td>
                     <td style={{ border: '1px solid #000', padding: '8px', textAlign: 'center' }}>君</td>
