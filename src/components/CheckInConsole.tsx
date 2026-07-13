@@ -53,6 +53,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
   const [attendanceMap, setAttendanceMap] = useState<Record<string, Attendance>>({});
   const [walkInMemberPool, setWalkInMemberPool] = useState<number[]>([]); // 当日飛び入りメンバー用の空き座席プール（列Aが空のメンバー枠）
   const [walkInPresidentPool, setWalkInPresidentPool] = useState<number[]>([]); // 当日飛び入り理事長用の空き座席プール（列Aが空の理事長枠）
+  const [blockPresidentPools, setBlockPresidentPools] = useState<Record<string, number[]>>({}); // ブロック／地区名 → 確保座席（個人未定）
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'CHECKIN' | 'SUPERVISION' | 'YOMIAGE' | 'OMIYAGE_LIST' | 'SEATMAP'>('CHECKIN');
 
@@ -128,14 +129,13 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
       (attData || []).forEach((a: Attendance) => { map[a.participant_id] = a; });
       setAttendanceMap(map);
 
-      // 当日飛び入り用の空き座席プール（列Aが空のルール）を取得。理事長用とメンバー用を
-      // 役割ごとに分けて保持する — メンバーが理事長の席に、理事長がメンバーの席に
-      // 誤って入らないようにするため。
+      // 座席プランのうち、個人名を伴わない全ルール（列Aが空＝当日飛び入り用、
+      // またはブロック／地区指定＝個人未定のロック済みゾーン）を取得する。
       const { data: poolData, error: poolError } = await supabase
         .from('seat_plan_rules')
-        .select('role, start_seat, end_seat')
+        .select('role, target_type, target_name, start_seat, end_seat')
         .eq('meeting_id', activeMeeting.id)
-        .eq('target_type', 'NONE');
+        .in('target_type', ['NONE', 'BLOCK_DISTRICT']);
 
       const expandToNums = (rows: any[]): number[] => {
         const nums = rows.flatMap((r: any) => {
@@ -150,16 +150,29 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
       };
 
       if (!poolError && poolData) {
-        setWalkInMemberPool(expandToNums((poolData as any[]).filter(r => r.role === 'MEMBER')));
-        setWalkInPresidentPool(expandToNums((poolData as any[]).filter(r => r.role === 'PRESIDENT')));
+        const rows = poolData as any[];
+        setWalkInMemberPool(expandToNums(rows.filter(r => r.role === 'MEMBER' && r.target_type === 'NONE')));
+        setWalkInPresidentPool(expandToNums(rows.filter(r => r.role === 'PRESIDENT' && r.target_type === 'NONE')));
+
+        // ブロック／地区ごとに理事長用の確保座席をまとめる（未登録の理事長でも、
+        // 自分のLOMが属するブロック／地区の確保ゾーンから自動で座席を得られるように）。
+        const blockRows = rows.filter(r => r.role === 'PRESIDENT' && r.target_type === 'BLOCK_DISTRICT');
+        const byBlock: Record<string, number[]> = {};
+        const blockNames = Array.from(new Set(blockRows.map(r => r.target_name).filter(Boolean)));
+        blockNames.forEach(name => {
+          byBlock[name] = expandToNums(blockRows.filter(r => r.target_name === name));
+        });
+        setBlockPresidentPools(byBlock);
       } else {
         setWalkInMemberPool([]);
         setWalkInPresidentPool([]);
+        setBlockPresidentPools({});
       }
     } else {
       setAttendanceMap({});
       setWalkInMemberPool([]);
       setWalkInPresidentPool([]);
+      setBlockPresidentPools({});
     }
   };
 
@@ -241,13 +254,17 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
 
   const nextAutomaticSeat = useMemo(() => {
     if (activeMeeting?.seating_strategy === 'SUMMER_CON') {
-      // サマーカンファレンスでは「列Aが空・理事長」の当日飛び入り用プールの中からのみ提案する
-      // （メンバー用エリアや、まだ受付していない他LOMの予約席を誤って提案しないため）。
-      const pool = walkInPresidentPool.map(n => String(n));
-      return pool.find(seat => !reservedSeats.has(seat)) || '満席（飛び入り枠なし）';
+      // 選択中の理事長のLOMが属するブロック／地区に確保ゾーンがあれば、まずそこから提案する
+      // （未登録の理事長でも、自分のブロックの確保枠をちゃんと使えるようにするため）。
+      // 該当がなければ、列Aが空の「当日飛び入り」共通プールにフォールバックする。
+      const block = selectedParticipant?.loms?.block;
+      const region = selectedParticipant?.loms?.region;
+      const blockPool = (block && blockPresidentPools[block]) || (region && blockPresidentPools[region]) || null;
+      const pool = (blockPool || walkInPresidentPool).map(n => String(n));
+      return pool.find(seat => !reservedSeats.has(seat)) || (blockPool ? '満席（ブロック確保枠なし）' : '満席（飛び入り枠なし）');
     }
     return ALL_SEATS.find(seat => !reservedSeats.has(seat)) || '満席';
-  }, [ALL_SEATS, reservedSeats, activeMeeting, walkInPresidentPool]);
+  }, [ALL_SEATS, reservedSeats, activeMeeting, walkInPresidentPool, blockPresidentPools, selectedParticipant]);
 
   // ---------------- プール（当日飛び入りメンバー用の空き座席）の空き状況 ----------------
   // すでに他の参加者の member_seat_range に含まれている番号は「使用済み」とみなす。
@@ -444,11 +461,13 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
   const handleSupervisionSave = async () => {
     if (!editingRowId || !activeMeeting) return;
 
-    const { last_name, first_name, participation_mode, assigned_seat, has_omiyage, omiyage_shop, omiyage_item } = supervisionForm;
+    const { last_name, first_name, last_name_kana, first_name_kana, participation_mode, assigned_seat, has_omiyage, omiyage_shop, omiyage_item } = supervisionForm;
 
     const participantPayload: Record<string, any> = {};
     if (last_name !== undefined) participantPayload.last_name = last_name;
     if (first_name !== undefined) participantPayload.first_name = first_name;
+    if (last_name_kana !== undefined) participantPayload.last_name_kana = last_name_kana;
+    if (first_name_kana !== undefined) participantPayload.first_name_kana = first_name_kana;
 
     const attendancePayload: Record<string, any> = {};
     if (participation_mode !== undefined) attendancePayload.participation_mode = participation_mode;
@@ -536,7 +555,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
       </tr>
       <tr style="font-size: 15px;">
-        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'} 青年会議所</td>
+        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
         <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
         <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
         <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
@@ -566,7 +585,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
       </tr>
       <tr style="font-size: 15px;">
-        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'} 青年会議所</td>
+        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
         <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
         <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
         <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
@@ -731,9 +750,13 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
                   {isSeatedMeeting ? (
                     <div>
-                      <label style={{ ...labelStyle, color: '#0ea5e9' }}>指定座席（固定制）</label>
-                      <input type="text" placeholder="座席を指定（空欄で自動）" style={inputStyle} value={specificSeatInput} onChange={(e) => { setSpecificSeatInput(e.target.value); setMode('現地'); }} />
-                      <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: '#64748b' }}>次の空席：<strong>{nextAutomaticSeat}</strong></p>
+                      <label style={{ ...labelStyle, color: '#0ea5e9' }}>割り当て座席（システムが自動決定・変更不可）</label>
+                      <div style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #bae6fd', backgroundColor: '#f0f9ff', color: '#0369a1', fontWeight: '900', fontSize: '18px', letterSpacing: '0.5px' }}>
+                        {specificSeatInput || nextAutomaticSeat}
+                      </div>
+                      <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: '#64748b' }}>
+                        {specificSeatInput ? '事前に確保された座席です。' : 'システムが自動で割り当てた座席です。'}
+                      </p>
                     </div>
                   ) : (
                     <div>
@@ -802,7 +825,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
               <thead>
                 <tr style={{ backgroundColor: '#f8fafc', borderBottom: '2px solid #e2e8f0', color: '#475569' }}>
                   <th style={{ padding: '12px' }}>LOM</th>
-                  <th style={{ padding: '12px' }}>氏名（漢字）</th>
+                  <th style={{ padding: '12px' }}>氏名</th>
                   <th style={{ padding: '12px' }}>参加形式</th>
                   <th style={{ padding: '12px' }}>座席</th>
                   <th style={{ padding: '12px', textAlign: 'center' }}>お土産</th>
@@ -817,12 +840,21 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
                       <td style={{ padding: '12px', fontWeight: 'bold', color: '#0B1F3A' }}>{p.loms?.name}</td>
                       <td style={{ padding: '12px' }}>
                         {isEditing ? (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <input style={{...inputStyle, padding: '4px'}} value={supervisionForm.last_name||''} onChange={e=>setSupervisionForm({...supervisionForm, last_name: e.target.value})} />
-                            <input style={{...inputStyle, padding: '4px'}} value={supervisionForm.first_name||''} onChange={e=>setSupervisionForm({...supervisionForm, first_name: e.target.value})} />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <input placeholder="姓" style={{...inputStyle, padding: '4px'}} value={supervisionForm.last_name||''} onChange={e=>setSupervisionForm({...supervisionForm, last_name: e.target.value})} />
+                              <input placeholder="名" style={{...inputStyle, padding: '4px'}} value={supervisionForm.first_name||''} onChange={e=>setSupervisionForm({...supervisionForm, first_name: e.target.value})} />
+                            </div>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <input placeholder="せい" style={{...inputStyle, padding: '4px', fontSize: '11px'}} value={supervisionForm.last_name_kana||''} onChange={e=>setSupervisionForm({...supervisionForm, last_name_kana: e.target.value})} />
+                              <input placeholder="めい" style={{...inputStyle, padding: '4px', fontSize: '11px'}} value={supervisionForm.first_name_kana||''} onChange={e=>setSupervisionForm({...supervisionForm, first_name_kana: e.target.value})} />
+                            </div>
                           </div>
                         ) : (
-                          `${p.last_name} ${p.first_name}`
+                          <div>
+                            <div>{p.last_name} {p.first_name}</div>
+                            <div style={{ fontSize: '11px', color: '#94a3b8' }}>{p.last_name_kana} {p.first_name_kana}</div>
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: '12px' }}>
