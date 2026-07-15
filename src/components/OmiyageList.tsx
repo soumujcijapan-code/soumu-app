@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Meeting } from '../types';
+import { Download } from 'lucide-react';
 
 interface GiftRow {
   id: string;
@@ -8,12 +9,21 @@ interface GiftRow {
   first_name: string;
   omiyage_shop: string | null;
   omiyage_item: string | null;
-  loms?: { name: string };
+  assigned_seat: string | null;
+  loms?: { name: string; sort_priority?: number };
 }
 
 interface Props {
   activeMeeting: Meeting | null;
 }
+
+// 座席番号を数値として比較する（文字列比較だと "10" が "2" より前に来てしまうため）
+const compareSeats = (a: string | null, b: string | null): number => {
+  const numA = a ? parseInt(a, 10) : NaN;
+  const numB = b ? parseInt(b, 10) : NaN;
+  if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+  return (a || '').localeCompare(b || '');
+};
 
 export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
   const [gifts, setGifts] = useState<GiftRow[]>([]);
@@ -28,7 +38,7 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
     // ils vivent dans `attendances`, scoppés à ce meeting_id précis.
     const { data, error } = await supabase
       .from('attendances')
-      .select('omiyage_shop, omiyage_item, participants!inner(id, last_name, first_name, loms(name))')
+      .select('omiyage_shop, omiyage_item, assigned_seat, participants!inner(id, last_name, first_name, loms(name, sort_priority))')
       .eq('meeting_id', activeMeeting.id)
       .eq('has_omiyage', true);
 
@@ -46,8 +56,17 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
         first_name: participant?.first_name || '',
         omiyage_shop: row.omiyage_shop,
         omiyage_item: row.omiyage_item,
+        assigned_seat: row.assigned_seat,
         loms: Array.isArray(participant?.loms) ? participant?.loms[0] : participant?.loms,
       };
+    });
+
+    // 席次順（LOMの優先順位 → 座席番号）に並び替え
+    rows.sort((a, b) => {
+      const priorA = a.loms?.sort_priority ?? 50;
+      const priorB = b.loms?.sort_priority ?? 50;
+      if (priorA !== priorB) return priorA - priorB;
+      return compareSeats(a.assigned_seat, b.assigned_seat);
     });
 
     setGifts(rows);
@@ -77,6 +96,27 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMeeting?.id]);
 
+  const handleExportExcel = async () => {
+    if (gifts.length === 0) {
+      alert('出力するお土産がありません。');
+      return;
+    }
+    const XLSX = await import('xlsx');
+    const rows = gifts.map(g => ({
+      'LOM': g.loms?.name || '',
+      '氏名': `${g.last_name} ${g.first_name}`,
+      '座席': g.assigned_seat || '',
+      'お店': g.omiyage_shop || '',
+      '品名': g.omiyage_item || '',
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet['!cols'] = [{ wch: 22 }, { wch: 16 }, { wch: 8 }, { wch: 20 }, { wch: 24 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'お土産');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `お土産リスト_${dateStr}.xlsx`);
+  };
+
   if (!activeMeeting) {
     return (
       <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#94a3b8', textAlign: 'center', fontStyle: 'italic' }}>
@@ -87,22 +127,17 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
 
   return (
     <div>
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h4 style={{ margin: 0, color: '#0B1F3A', fontSize: '16px' }}>お土産管理簿</h4>
-        <button onClick={() => window.print()} style={{ padding: '10px 20px', backgroundColor: '#00A3E0', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}>一覧を印刷</button>
+        <button
+          onClick={handleExportExcel}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: '#0B1F3A', color: '#F5C842', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}
+        >
+          <Download size={15} /> Excelに出力
+        </button>
       </div>
 
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          .print-area, .print-area * { visibility: visible; }
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
-          .no-print { display: none !important; }
-        }
-      `}</style>
-
-      {/* この画面表示は印刷結果とまったく同じ見た目にしてある（別デザインを持たない） */}
-      <div className="print-area" style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+      <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
         <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', textAlign: 'center', color: '#0f172a' }}>
           {activeMeeting.location_name}（{activeMeeting.meeting_date}） お土産受領一覧
         </h3>
@@ -131,6 +166,13 @@ export const OmiyageList: React.FC<Props> = ({ activeMeeting }) => {
             )}
           </tbody>
         </table>
+
+        {gifts.length > 0 && (
+          <p style={{ textAlign: 'center', fontSize: '15px', fontWeight: 'bold', letterSpacing: '0.5px', marginTop: '24px', lineHeight: 2, color: '#0f172a' }}>
+            以上となります。<br/>
+            ありがとうございました。
+          </p>
+        )}
       </div>
     </div>
   );
