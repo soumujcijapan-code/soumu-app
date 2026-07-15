@@ -1,14 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import type { Meeting, Participant } from '../types';
+import { Download } from 'lucide-react';
 
 interface Props {
   activeMeeting: Meeting | null;
   activeYear: number;
 }
 
+interface AttendeeRow extends Participant {
+  assigned_seat: string | null;
+}
+
+// 座席番号を数値として比較する（文字列比較だと "10" が "2" より前に来てしまうため）
+const compareSeats = (a: string | null, b: string | null): number => {
+  const numA = a ? parseInt(a, 10) : NaN;
+  const numB = b ? parseInt(b, 10) : NaN;
+  if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+  return (a || '').localeCompare(b || '');
+};
+
 export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
-  const [attendees, setAttendees] = useState<Participant[]>([]);
+  const [attendees, setAttendees] = useState<AttendeeRow[]>([]);
 
   const fetchAttendees = async () => {
     if (!activeMeeting) return;
@@ -25,11 +38,11 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
       return;
     }
 
-    // 2. この会議で受付済み（checked_in）の参加者IDを取得
-    //    checked_in / 会議との紐付けは attendances テーブルで管理されている。
+    // 2. この会議で受付済み（checked_in）の参加者IDと座席を取得
+    //    checked_in / 座席 / 会議との紐付けは attendances テーブルで管理されている。
     const { data: attData, error: aError } = await supabase
       .from('attendances')
-      .select('participant_id')
+      .select('participant_id, assigned_seat')
       .eq('meeting_id', activeMeeting.id)
       .eq('checked_in', true);
 
@@ -39,19 +52,20 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
       return;
     }
 
-    const checkedInIds = new Set((attData || []).map(a => a.participant_id));
+    const seatMap = new Map((attData || []).map(a => [a.participant_id, a.assigned_seat as string | null]));
 
-    // 3. 席次順（LOMの優先順位 → 認証番号）に並び替え
+    // 3. 席次順（LOMの優先順位 → 座席番号）に並び替え
     const checkedInParticipants = (participantsData as any[])
-      .filter(p => checkedInIds.has(p.id))
+      .filter(p => seatMap.has(p.id))
+      .map(p => ({ ...p, assigned_seat: seatMap.get(p.id) || null }))
       .sort((a, b) => {
         const priorA = a.loms?.sort_priority ?? 50;
         const priorB = b.loms?.sort_priority ?? 50;
         if (priorA !== priorB) return priorA - priorB;
-        return (a.auth_id || '').localeCompare(b.auth_id || '');
+        return compareSeats(a.assigned_seat, b.assigned_seat);
       });
 
-    setAttendees(checkedInParticipants as Participant[]);
+    setAttendees(checkedInParticipants as AttendeeRow[]);
   };
 
   useEffect(() => {
@@ -78,6 +92,29 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMeeting?.id]);
 
+  const handleExportExcel = async () => {
+    if (attendees.length === 0) {
+      alert('出力する登録者がいません。');
+      return;
+    }
+    const XLSX = await import('xlsx');
+    const rows = attendees.map(p => ({
+      'LOM': p.loms?.name || '',
+      'LOMふりがな': p.loms?.name_kana || '',
+      '氏': p.last_name,
+      '名': p.first_name,
+      '氏（ふりがな）': p.last_name_kana,
+      '名（ふりがな）': p.first_name_kana,
+      '座席': p.assigned_seat || '',
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet['!cols'] = [{ wch: 22 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '読み上げ表');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `読み上げ表_${dateStr}.xlsx`);
+  };
+
   if (!activeMeeting) {
     return (
       <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#94a3b8', textAlign: 'center', fontStyle: 'italic' }}>
@@ -88,61 +125,18 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
 
   return (
     <div>
-
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '16px' }}>読み上げ表</h3>
         <button
-          onClick={() => window.print()}
-          style={{ padding: '10px 20px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}
+          onClick={handleExportExcel}
+          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: '#0B1F3A', color: '#F5C842', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '13px', cursor: 'pointer' }}
         >
-          印刷する
+          <Download size={15} /> Excelに出力
         </button>
       </div>
 
-      {/* この画面表示は印刷結果とまったく同じ見た目にしてある（別デザインを持たない） */}
-      <div className="print-document">
-        <style>{`
-          @media print {
-            body * { visibility: hidden; }
-            .print-document, .print-document * { visibility: visible; }
-            .print-document {
-              position: absolute;
-              left: 0;
-              top: 0;
-              width: 100%;
-              max-width: none;
-              padding: 20px;
-            }
-            .no-print { display: none !important; }
-            table, tr, td {
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          }
-          .print-document {
-            background-color: #fff;
-            color: #0f172a;
-            padding: 40px;
-            border-radius: 8px;
-            border: 1px solid #e2e8f0;
-            font-family: 'Meiryo', 'Yu Gothic', sans-serif;
-            line-height: 1.8;
-          }
-          .intro-text {
-            font-size: 15px;
-            font-weight: bold;
-            letter-spacing: 0.5px;
-            text-align: center;
-            margin-top: 24px;
-          }
-          .doc-title {
-            text-align: center;
-            font-size: 20px;
-            margin-bottom: 20px;
-          }
-        `}</style>
-
-        <h1 className="doc-title">登録者・オブザーバーリスト</h1>
+      <div style={{ backgroundColor: '#fff', color: '#0f172a', padding: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', fontFamily: "'Meiryo', 'Yu Gothic', sans-serif", lineHeight: 1.8 }}>
+        <h1 style={{ textAlign: 'center', fontSize: '20px', marginBottom: '20px' }}>登録者・オブザーバーリスト</h1>
 
         {attendees.length === 0 ? (
           <p style={{ textAlign: 'center', fontStyle: 'italic', color: '#94a3b8' }}>
@@ -171,7 +165,12 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
           </table>
         )}
 
-        <p className="intro-text">改めましてオブザーブいただきました理事長の皆様に盛大な拍手をお願いいたします。</p>
+        <p style={{ textAlign: 'center', fontSize: '15px', fontWeight: 'bold', letterSpacing: '0.5px', marginTop: '24px', lineHeight: 2 }}>
+          以上、開会までに受付をお済になられました理事長の皆様のご紹介とさせていただきます。<br/>
+          改めましてオブザーブいただきました理事長の皆様に盛大な拍手をお願いいたします。<br/>
+          オブザーバー紹介は以上となります。<br/>
+          また、お土産も数多くいただいておりますので、ご紹介させていただきます。
+        </p>
       </div>
     </div>
   );
