@@ -19,39 +19,20 @@ type EnrichedParticipant = Participant & {
   omiyage_shop: string | null;
   omiyage_item: string | null;
   assigned_seat: string | null;
-  member_seat_range: string | null;
-  lom_members_count: number;
 };
 
-// Calcule le sous-intervalle réellement occupé par les membres accompagnants, à partir
-// de la zone brute réservée (ex: "119 ~ 166") et du nombre de membres déclaré à l'accueil.
-// Ex: zone "119 ~ 166" + 5 membres → "119 ~ 123".
-const computeMemberRangeDisplay = (rawRange: string | null, count: number): string | null => {
-  if (!rawRange || !count || count <= 0) return null;
-  const startToken = rawRange.split('~')[0].trim();
-  const start = parseInt(startToken, 10);
-  if (isNaN(start)) return rawRange; // format非数値：そのまま表示
-  const end = start + count - 1;
-  return `${start} ~ ${end}`;
-};
-
-// "119 ~ 165" のような文字列を数値の配列に展開する（当日飛び入りメンバー枠の空き計算用）
-const parseRangeString = (rangeStr: string): number[] => {
-  const parts = rangeStr.split('~').map(s => s.trim());
-  const start = parseInt(parts[0], 10);
-  if (isNaN(start)) return [];
-  const end = parts[1] ? parseInt(parts[1], 10) : start;
-  if (isNaN(end) || end < start) return [start];
-  const nums: number[] = [];
-  for (let i = start; i <= end; i++) nums.push(i);
-  return nums;
+// 座席番号を数値として比較する（文字列比較だと "10" が "2" より前に来てしまうため）
+const compareSeats = (a: string, b: string): number => {
+  const numA = parseInt(a, 10);
+  const numB = parseInt(b, 10);
+  if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+  return a.localeCompare(b);
 };
 
 export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) => {
   // 1. ÉTATS GLOBAUX
   const [roster, setRoster] = useState<Participant[]>([]);
   const [attendanceMap, setAttendanceMap] = useState<Record<string, Attendance>>({});
-  const [walkInMemberPool, setWalkInMemberPool] = useState<number[]>([]); // 当日飛び入りメンバー用の空き座席プール（列Aが空のメンバー枠）
   const [walkInPresidentPool, setWalkInPresidentPool] = useState<number[]>([]); // 当日飛び入り理事長用の空き座席プール（列Aが空の理事長枠）
   const [blockPresidentPools, setBlockPresidentPools] = useState<Record<string, number[]>>({}); // ブロック／地区名 → 確保座席（個人未定）
   const [loading, setLoading] = useState(false);
@@ -61,11 +42,10 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [selectedParticipant, setSelectedParticipant] = useState<EnrichedParticipant | null>(null);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [checkinResult, setCheckinResult] = useState<{ name: string; lom: string; mode: '現地' | 'ZOOM'; seat: string } | null>(null);
   const [mode, setMode] = useState<'現地' | 'ZOOM'>('現地');
   const [specificSeatInput, setSpecificSeatInput] = useState('');
   const [hasOmiyage, setHasOmiyage] = useState(false);
-  const [lomMembersCount, setLomMembersCount] = useState<number>(0);
 
   // 3. ÉTATS DE CORRECTION (Formulaire principal)
   const [editLastName, setEditLastName] = useState('');
@@ -129,12 +109,13 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
       (attData || []).forEach((a: Attendance) => { map[a.participant_id] = a; });
       setAttendanceMap(map);
 
-      // 座席プランのうち、個人名を伴わない全ルール（列Aが空＝当日飛び入り用、
-      // またはブロック／地区指定＝個人未定のロック済みゾーン）を取得する。
+      // 座席プランのうち、個人名を伴わない理事長ルールを取得する（列Aが空＝当日飛び入り用、
+      // またはブロック／地区指定＝個人未定のロック済みゾーン）。
       const { data: poolData, error: poolError } = await supabase
         .from('seat_plan_rules')
         .select('role, target_type, target_name, start_seat, end_seat')
         .eq('meeting_id', activeMeeting.id)
+        .eq('role', 'PRESIDENT')
         .in('target_type', ['NONE', 'BLOCK_DISTRICT']);
 
       const expandToNums = (rows: any[]): number[] => {
@@ -151,12 +132,11 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
 
       if (!poolError && poolData) {
         const rows = poolData as any[];
-        setWalkInMemberPool(expandToNums(rows.filter(r => r.role === 'MEMBER' && r.target_type === 'NONE')));
-        setWalkInPresidentPool(expandToNums(rows.filter(r => r.role === 'PRESIDENT' && r.target_type === 'NONE')));
+        setWalkInPresidentPool(expandToNums(rows.filter(r => r.target_type === 'NONE')));
 
         // ブロック／地区ごとに理事長用の確保座席をまとめる（未登録の理事長でも、
         // 自分のLOMが属するブロック／地区の確保ゾーンから自動で座席を得られるように）。
-        const blockRows = rows.filter(r => r.role === 'PRESIDENT' && r.target_type === 'BLOCK_DISTRICT');
+        const blockRows = rows.filter(r => r.target_type === 'BLOCK_DISTRICT');
         const byBlock: Record<string, number[]> = {};
         const blockNames = Array.from(new Set(blockRows.map(r => r.target_name).filter(Boolean)));
         blockNames.forEach(name => {
@@ -164,13 +144,11 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         });
         setBlockPresidentPools(byBlock);
       } else {
-        setWalkInMemberPool([]);
         setWalkInPresidentPool([]);
         setBlockPresidentPools({});
       }
     } else {
       setAttendanceMap({});
-      setWalkInMemberPool([]);
       setWalkInPresidentPool([]);
       setBlockPresidentPools({});
     }
@@ -236,8 +214,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         omiyage_shop: a?.omiyage_shop || null,
         omiyage_item: a?.omiyage_item || null,
         assigned_seat: a?.assigned_seat || null,
-        member_seat_range: a?.member_seat_range || null,
-        lom_members_count: a?.lom_members_count || 0,
       };
     });
   }, [roster, attendanceMap]);
@@ -265,31 +241,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     }
     return ALL_SEATS.find(seat => !reservedSeats.has(seat)) || '満席';
   }, [ALL_SEATS, reservedSeats, activeMeeting, walkInPresidentPool, blockPresidentPools, selectedParticipant]);
-
-  // ---------------- プール（当日飛び入りメンバー用の空き座席）の空き状況 ----------------
-  // すでに他の参加者の member_seat_range に含まれている番号は「使用済み」とみなす。
-  const walkInMemberUsedSet = useMemo(() => {
-    const poolSet = new Set(walkInMemberPool);
-    const used = new Set<number>();
-    Object.values(attendanceMap).forEach((a: Attendance) => {
-      if (!a.member_seat_range) return;
-      parseRangeString(a.member_seat_range).forEach(n => { if (poolSet.has(n)) used.add(n); });
-    });
-    return used;
-  }, [walkInMemberPool, attendanceMap]);
-
-  const walkInMemberAvailableCount = walkInMemberPool.length - walkInMemberUsedSet.size;
-
-  // 必要人数分の空き座席を確保する（連続していなくても、空いている番号を先頭から確保する）
-  const allocateWalkInMemberSeats = (count: number): { range: string | null; allocated: number; available: number } => {
-    const available = walkInMemberPool.filter(n => !walkInMemberUsedSet.has(n));
-    if (available.length === 0 || count <= 0) return { range: null, allocated: 0, available: available.length };
-    const chosen = available.slice(0, count);
-    const isContiguous = chosen[chosen.length - 1] - chosen[0] + 1 === chosen.length;
-    const range = isContiguous ? `${chosen[0]} ~ ${chosen[chosen.length - 1]}` : chosen.join(', ');
-    return { range, allocated: chosen.length, available: available.length };
-  };
-
   // ---------------- MOTEURS DE RECHERCHE ----------------
   const candidates = useMemo(() => {
     if (appliedSearch.trim().length < 1) return [];
@@ -309,7 +260,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     }).slice(0, 5);
   }, [omiSearch, rosterWithAttendance]);
 
-  // --- DOUBLE TRI HYBRIDE : PRÉSÉANCE DU LOM + ALIGNEMENT DES SIÈGES ---
+  // --- DOUBLE TRI HYBRIDE : PRÉSÉANCE DU LOM + ALIGNEMENT DES SIÈGES (NUMÉRIQUE) ---
   const checkedInMembers = useMemo(() => {
     return rosterWithAttendance
       .filter(p => p.checked_in)
@@ -326,7 +277,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
           return priorA - priorB;
         }
 
-        return seatA.localeCompare(seatB);
+        return compareSeats(seatA, seatB);
       });
   }, [rosterWithAttendance]);
 
@@ -347,7 +298,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     setMode(p.participation_mode === 'ZOOM' ? 'ZOOM' : '現地');
     setHasOmiyage(p.has_omiyage);
     setSpecificSeatInput(p.assigned_seat || '');
-    setLomMembersCount(p.lom_members_count || 0);
     setEditLastName(p.last_name);
     setEditFirstName(p.first_name);
     setEditLastNameKana(p.last_name_kana || '');
@@ -362,24 +312,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     const isSeatedMeeting = activeMeeting.seating_strategy === 'KYOTO_FIXED' || activeMeeting.seating_strategy === 'SUMMER_CON';
     let finalSeat = mode === 'ZOOM' ? 'Distanciel' : (isSeatedMeeting && specificSeatInput.trim() ? specificSeatInput.trim().toUpperCase() : nextAutomaticSeat);
 
-    // 当日飛び入りの理事長（トポロジーでメンバーエリアを予約されていない）が同伴メンバーを
-    // 申告した場合、空き座席プールから自動で確保する。プランで既にメンバーエリアが
-    // 割り当てられている場合はそちらを優先し、ここでは何もしない。
-    let finalMemberRange: string | null = selectedParticipant.member_seat_range || null;
-    if (activeMeeting.seating_strategy === 'SUMMER_CON' && !selectedParticipant.member_seat_range && lomMembersCount > 0) {
-      const result = allocateWalkInMemberSeats(lomMembersCount);
-      finalMemberRange = result.range;
-      if (result.allocated < lomMembersCount) {
-        alert(
-          `⚠️ メンバー用の空き座席が不足しています。\n\n` +
-          `申告された人数：${lomMembersCount}名\n` +
-          `確保できた座席：${result.allocated}名分\n` +
-          `（当日飛び入り用の空き座席は残り ${result.available} 席でした）\n\n` +
-          `手動での調整をご検討ください。`
-        );
-      }
-    }
-
     const attendancePayload = {
       meeting_id: activeMeeting.id,
       participant_id: selectedParticipant.id,
@@ -389,8 +321,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
       omiyage_shop: hasOmiyage ? (selectedParticipant.omiyage_shop || null) : null,
       omiyage_item: hasOmiyage ? (selectedParticipant.omiyage_item || null) : null,
       assigned_seat: finalSeat,
-      member_seat_range: finalMemberRange,
-      lom_members_count: activeMeeting.seating_strategy === 'SUMMER_CON' ? lomMembersCount : null
     };
 
     const participantPayload = {
@@ -417,15 +347,22 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         // poste d'accueil vient de prendre ce siège au même moment.
         if (aError.code === '23505') {
           await fetchRoster();
-          setShowConfirm(false);
-          throw new Error(`座席「${finalSeat}」は直前に他の端末で使用されました。最新の空席を反映しましたので、もう一度「確定」を押してください。`);
+          throw new Error(`座席「${finalSeat}」は直前に他の端末で使用されました。最新の空席を反映しましたので、もう一度「受付を確定」を押してください。`);
         }
         throw aError;
       }
 
       await fetchRoster();
 
-      setShowConfirm(false);
+      // 座席はここで確定済み（DBへの書き込み成功後）。ポップアップにはこの
+      // 確定値のみを表示する — 書き込み前の「見込み」を見せることは絶対にしない。
+      setCheckinResult({
+        name: `${selectedParticipant.last_name} ${selectedParticipant.first_name}`,
+        lom: selectedParticipant.loms?.name || '',
+        mode,
+        seat: finalSeat,
+      });
+
       setSelectedParticipant(null);
       setSearchInput('');
       setAppliedSearch('');
@@ -508,9 +445,8 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     if (!confirmation || !activeMeeting) return;
 
     setLoading(true);
-    // 受付状態のみ解除する（DELETEはしない）。座席（assigned_seat）や Summer Con の
-    // メンバーエリア（member_seat_range）は、事前に取り込んだ座席配置なので保持する。
-    // 再度受付する際にこの席が自動で復元される。
+    // 受付状態のみ解除する（DELETEはしない）。座席（assigned_seat）は事前に取り込んだ
+    // 座席配置なので保持する。再度受付する際にこの席が自動で復元される。
     const { error } = await supabase
       .from('attendances')
       .update({ checked_in: false, has_omiyage: false, omiyage_shop: null, omiyage_item: null })
@@ -544,31 +480,53 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
   };
 
   // ---------------- MOTEURS DE GÉNÉRATION D'IMPRESSION ----------------
+  // 配列を指定サイズごとに分割する（印刷ページ分割用）
+  const chunkArray = (arr: EnrichedParticipant[], size: number): EnrichedParticipant[][] => {
+    const chunks: EnrichedParticipant[][] = [];
+    for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+    return chunks;
+  };
+
   const generateObserversHtml = () => {
     if (checkedInMembers.length === 0) return `<p style="text-align:center; color:#64748b; font-style: italic;">Aucun observateur enregistré.</p>`;
 
-    const rows = checkedInMembers.map(p => `
-      <tr style="background-color: #c9daf8; font-size: 11px;">
-        <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
-        <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
-        <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
-        <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
-      </tr>
-      <tr style="font-size: 15px;">
-        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
-        <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
-        <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
-        <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
-      </tr>
-    `).join('');
+    // ふりがな行と氏名行のペアがページをまたいで分断されないよう、ページごとに
+    // 別々のテーブルとして出力し、テーブル間に明示的な改ページを入れる。
+    const ROWS_PER_PAGE = 15;
+    const pages = chunkArray(checkedInMembers, ROWS_PER_PAGE);
+
+    const tables = pages.map((page, pageIndex) => {
+      const rows = page.map(p => `
+        <tr style="background-color: #c9daf8; font-size: 11px; page-break-inside: avoid;">
+          <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
+          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
+          <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
+          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
+        </tr>
+        <tr style="font-size: 15px; page-break-inside: avoid;">
+          <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
+          <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
+          <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
+          <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
+        </tr>
+      `).join('');
+
+      const isLastPage = pageIndex === pages.length - 1;
+      return `
+        <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px; ${isLastPage ? '' : 'page-break-after: always;'}">
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }).join('');
 
     return `
       <h1 style="text-align: center; font-size: 20px; margin-bottom: 20px; font-family: 'Meiryo', 'Yu Gothic', sans-serif;">登録者・オブザーバーリスト</h1>
-      <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px;">
-        <tbody>${rows}</tbody>
-      </table>
-      <p style="text-align: center; font-size: 15px; font-weight: bold; font-family: 'Meiryo', 'Yu Gothic', sans-serif; letter-spacing: 0.5px; margin-top: 24px;">
-        改めましてオブザーブいただきました理事長の皆様に盛大な拍手をお願いいたします。
+      ${tables}
+      <p style="text-align: center; font-size: 15px; font-weight: bold; font-family: 'Meiryo', 'Yu Gothic', sans-serif; letter-spacing: 0.5px; margin-top: 24px; line-height: 2;">
+        以上、開会までに受付をお済になられました理事長の皆様のご紹介とさせていただきます。<br/>
+        改めましてオブザーブいただきました理事長の皆様に盛大な拍手をお願いいたします。<br/>
+        オブザーバー紹介は以上となります。<br/>
+        また、お土産も数多くいただいておりますので、ご紹介させていただきます。
       </p>
     `;
   };
@@ -577,34 +535,46 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     const omiyages = checkedInMembers.filter(p => p.has_omiyage);
     if (omiyages.length === 0) return `<p style="text-align:center; color:#64748b; font-style: italic; font-size: 18px;">Aucun Omiyage enregistré pour le moment.</p>`;
 
-    const rows = omiyages.map(p => `
-      <tr style="background-color: #c9daf8; font-size: 11px;">
-        <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
-        <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
-        <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
-        <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
-      </tr>
-      <tr style="font-size: 15px;">
-        <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
-        <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
-        <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
-        <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
-      </tr>
-      <tr style="font-size: 16px;">
-        <td colspan="4" style="border: 1px solid #000; padding: 12px; text-align: center; line-height: 1.6;">
-          より ${p.omiyage_shop || '—'} さんの<br/>
-          ${p.omiyage_item || '—'} を頂戴しております。
-        </td>
-      </tr>
-    `).join('');
+    // お土産情報の行が1つ多い分、1ページあたりの人数を少なめにする。
+    const ROWS_PER_PAGE = 9;
+    const pages = chunkArray(omiyages, ROWS_PER_PAGE);
+
+    const tables = pages.map((page, pageIndex) => {
+      const rows = page.map(p => `
+        <tr style="background-color: #c9daf8; font-size: 11px; page-break-inside: avoid;">
+          <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
+          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
+          <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
+          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
+        </tr>
+        <tr style="font-size: 15px; page-break-inside: avoid;">
+          <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
+          <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
+          <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
+          <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
+        </tr>
+        <tr style="font-size: 16px; page-break-inside: avoid;">
+          <td colspan="4" style="border: 1px solid #000; padding: 12px; text-align: center; line-height: 1.6;">
+            より ${p.omiyage_shop || '—'} さんの<br/>
+            ${p.omiyage_item || '—'} を頂戴しております。
+          </td>
+        </tr>
+      `).join('');
+
+      const isLastPage = pageIndex === pages.length - 1;
+      return `
+        <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px; ${isLastPage ? '' : 'page-break-after: always;'}">
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }).join('');
 
     return `
-      <h1 style="text-align: center; font-size: 20px; color: #0f172a; margin-bottom: 20px; font-family: 'Meiryo', 'Yu Gothic', sans-serif;">🎁 お土産 披露リスト</h1>
-      <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px;">
-        <tbody>${rows}</tbody>
-      </table>
-      <p style="text-align: center; font-size: 15px; font-weight: bold; font-family: 'Meiryo', 'Yu Gothic', sans-serif; letter-spacing: 0.5px; margin-top: 24px;">
-        改めましてオブザーブいただきました理事長の皆様に盛大な拍手をお願いいたします。
+      <h1 style="text-align: center; font-size: 20px; color: #0f172a; margin-bottom: 20px; font-family: 'Meiryo', 'Yu Gothic', sans-serif;">お土産 披露リスト</h1>
+      ${tables}
+      <p style="text-align: center; font-size: 15px; font-weight: bold; font-family: 'Meiryo', 'Yu Gothic', sans-serif; letter-spacing: 0.5px; margin-top: 24px; line-height: 2;">
+        以上となります。<br/>
+        ありがとうございました。
       </p>
     `;
   };
@@ -721,7 +691,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
 
           <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
             {selectedParticipant ? (
-              <form onSubmit={e => { e.preventDefault(); setShowConfirm(true); }}>
+              <form onSubmit={e => { e.preventDefault(); executeCheckIn(); }}>
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 16px', backgroundColor: '#f0f9ff', borderRadius: '10px', marginBottom: '12px', border: '1px solid #bae6fd' }}>
                   <div style={{ minWidth: 0 }}>
@@ -748,45 +718,15 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
                 </div>
 
                 <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
-                  {isSeatedMeeting ? (
-                    <div>
-                      <label style={{ ...labelStyle, color: '#0ea5e9' }}>割り当て座席（システムが自動決定・変更不可）</label>
-                      <div style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #bae6fd', backgroundColor: '#f0f9ff', color: '#0369a1', fontWeight: '900', fontSize: '18px', letterSpacing: '0.5px' }}>
-                        {specificSeatInput || nextAutomaticSeat}
-                      </div>
-                      <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: '#64748b' }}>
-                        {specificSeatInput ? '事前に確保された座席です。' : 'システムが自動で割り当てた座席です。'}
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      <label style={labelStyle}>参加形式</label>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button type="button" onClick={() => setMode('現地')} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: mode === '現地' ? '2px solid #10b981' : '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: mode === '現地' ? '#f0fdf4' : '#fff', color: mode === '現地' ? '#16a34a' : '#475569' }}>現地</button>
-                        <button type="button" onClick={() => setMode('ZOOM')} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: mode === 'ZOOM' ? '2px solid #00A3E0' : '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: mode === 'ZOOM' ? '#f0f9ff' : '#fff', color: mode === 'ZOOM' ? '#00A3E0' : '#475569' }}>Zoom</button>
-                      </div>
-                    </div>
-                  )}
-                  {activeMeeting.seating_strategy === 'SUMMER_CON' && (
-                    <div style={{ marginTop: '8px' }}>
-                      <label style={labelStyle}>LOM同伴メンバー数</label>
-                      <input type="number" style={inputStyle} value={lomMembersCount} onChange={e => setLomMembersCount(parseInt(e.target.value)||0)} />
-                      {selectedParticipant.member_seat_range ? (
-                        <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: '#64748b' }}>
-                          メンバーエリア（予約枠）：<strong>{selectedParticipant.member_seat_range}</strong>
-                          {lomMembersCount > 0 && (
-                            <> ／ 実際の使用範囲：<strong style={{ color: '#0ea5e9' }}>{computeMemberRangeDisplay(selectedParticipant.member_seat_range, lomMembersCount)}</strong>（{lomMembersCount}名）</>
-                          )}
-                        </p>
-                      ) : walkInMemberPool.length > 0 ? (
-                        <p style={{ fontSize: '11px', margin: '6px 0 0 0', color: walkInMemberAvailableCount < lomMembersCount ? '#dc2626' : '#64748b' }}>
-                          当日飛び入り用の空き座席：<strong>{walkInMemberAvailableCount}</strong> / {walkInMemberPool.length} 席
-                          {lomMembersCount > 0 && walkInMemberAvailableCount < lomMembersCount && (
-                            <> ⚠️ 不足しています（確定時に詳細を表示します）</>
-                          )}
-                        </p>
-                      ) : null}
-                    </div>
+                  <label style={labelStyle}>参加形式</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" onClick={() => setMode('現地')} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: mode === '現地' ? '2px solid #10b981' : '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: mode === '現地' ? '#f0fdf4' : '#fff', color: mode === '現地' ? '#16a34a' : '#475569' }}>現地</button>
+                    <button type="button" onClick={() => setMode('ZOOM')} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: mode === 'ZOOM' ? '2px solid #00A3E0' : '1px solid #cbd5e1', fontWeight: 'bold', backgroundColor: mode === 'ZOOM' ? '#f0f9ff' : '#fff', color: mode === 'ZOOM' ? '#00A3E0' : '#475569' }}>Zoom</button>
+                  </div>
+                  {isSeatedMeeting && mode === '現地' && (
+                    <p style={{ fontSize: '11px', margin: '10px 0 0 0', color: '#64748b' }}>
+                      座席はシステムが自動的に割り当てます。
+                    </p>
                   )}
                 </div>
 
@@ -869,14 +809,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
                         {isEditing ? (
                           <input style={{...inputStyle, padding: '4px', borderColor: '#38bdf8'}} value={supervisionForm.assigned_seat||''} onChange={e=>setSupervisionForm({...supervisionForm, assigned_seat: e.target.value})} />
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '4px 8px', borderRadius: '4px', fontWeight: 'bold', width: 'fit-content' }}>{p.assigned_seat}</span>
-                            {activeMeeting.seating_strategy === 'SUMMER_CON' && p.member_seat_range && p.lom_members_count > 0 && (
-                              <span style={{ fontSize: '11px', color: '#0ea5e9', fontWeight: 'bold' }}>
-                                🧑‍🤝‍🧑 {computeMemberRangeDisplay(p.member_seat_range, p.lom_members_count)}（{p.lom_members_count}名）
-                              </span>
-                            )}
-                          </div>
+                          <span style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '4px 8px', borderRadius: '4px', fontWeight: 'bold' }}>{p.assigned_seat}</span>
                         )}
                       </td>
                       <td style={{ padding: '12px', textAlign: 'center', fontSize: '16px' }}>
@@ -1059,31 +992,39 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
         </div>
       )}
 
-      {/* POPUP DE CONFIRMATION (Émargement principal) */}
-      {showConfirm && selectedParticipant && (
+      {/* POPUP DE RÉSULTAT (受付完了) — n'apparaît qu'APRÈS l'écriture en base.
+          Le siège affiché est donc définitif : pas de bouton retour/annuler ici. */}
+      {checkinResult && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(11, 31, 58, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '32px', width: '400px' }}>
-            <h3 style={{ margin: '0 0 24px 0', textAlign: 'center', fontSize: '20px' }}>座席の確定</h3>
-            <p style={{ textAlign: 'center', fontSize: '16px', fontWeight: 'bold', color: '#16a34a', backgroundColor: '#dcfce7', padding: '12px', borderRadius: '8px' }}>
-              座席：{mode === 'ZOOM' ? 'Distanciel' : (isSeatedMeeting && specificSeatInput.trim() ? specificSeatInput.trim().toUpperCase() : nextAutomaticSeat)}
-            </p>
-            {activeMeeting.seating_strategy === 'SUMMER_CON' && selectedParticipant.member_seat_range && (
-              <p style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: '#0ea5e9', backgroundColor: '#f0f9ff', padding: '10px', borderRadius: '8px', marginTop: '8px' }}>
-                メンバー席：{lomMembersCount > 0
-                  ? `${computeMemberRangeDisplay(selectedParticipant.member_seat_range, lomMembersCount)}（${lomMembersCount}名）`
-                  : `${selectedParticipant.member_seat_range}（予約枠・人数未入力）`}
-              </p>
+          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '32px', width: '400px', textAlign: 'center' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '24px', fontWeight: 900 }}>✓</div>
+            <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 900, color: '#0f172a' }}>受付が完了しました</h3>
+            <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#0f172a' }}>{checkinResult.name}</p>
+            <p style={{ fontSize: '13px', color: '#64748b', marginTop: '4px', marginBottom: '20px' }}>{checkinResult.lom}</p>
+
+            {checkinResult.mode === 'ZOOM' ? (
+              <div style={{ padding: '16px', borderRadius: '10px', backgroundColor: '#f0f9ff', color: '#0369a1', fontWeight: 900, fontSize: '16px' }}>
+                Zoom参加
+              </div>
+            ) : checkinResult.seat && checkinResult.seat !== 'Distanciel' ? (
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '6px' }}>座席番号</div>
+                <div style={{ padding: '18px', borderRadius: '12px', backgroundColor: '#0B1F3A', color: '#F5C842', fontWeight: 900, fontSize: '32px', letterSpacing: '1px' }}>
+                  {checkinResult.seat}
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '16px', borderRadius: '10px', backgroundColor: '#f0fdf4', color: '#16a34a', fontWeight: 900, fontSize: '16px' }}>
+                現地参加
+              </div>
             )}
-            {activeMeeting.seating_strategy === 'SUMMER_CON' && !selectedParticipant.member_seat_range && lomMembersCount > 0 && (
-              <p style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: walkInMemberAvailableCount < lomMembersCount ? '#dc2626' : '#0ea5e9', backgroundColor: walkInMemberAvailableCount < lomMembersCount ? '#fef2f2' : '#f0f9ff', padding: '10px', borderRadius: '8px', marginTop: '8px' }}>
-                メンバー席（当日飛び入り）：{allocateWalkInMemberSeats(lomMembersCount).range || '確保できません'}
-                {walkInMemberAvailableCount < lomMembersCount && ` ／ 空き ${walkInMemberAvailableCount} 席のみ`}
-              </p>
-            )}
-            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-              <button onClick={() => setShowConfirm(false)} style={{ flex: 1, padding: '12px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>キャンセル</button>
-              <button onClick={executeCheckIn} style={{ flex: 1, padding: '12px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>確定</button>
-            </div>
+
+            <button
+              onClick={() => setCheckinResult(null)}
+              style={{ width: '100%', padding: '14px', marginTop: '24px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: '900', fontSize: '15px', cursor: 'pointer' }}
+            >
+              閉じる
+            </button>
           </div>
         </div>
       )}
