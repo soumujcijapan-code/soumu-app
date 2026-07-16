@@ -136,7 +136,10 @@ export const YomiageList: React.FC<Props> = ({ activeMeeting, activeYear }) => {
       </div>
 
       <div style={{ backgroundColor: '#fff', color: '#0f172a', padding: '40px', borderRadius: '8px', border: '1px solid #e2e8f0', fontFamily: "'Meiryo', 'Yu Gothic', sans-serif", lineHeight: 1.8 }}>
-        <h1 style={{ textAlign: 'center', fontSize: '20px', marginBottom: '20px' }}>登録者・オブザーバーリスト</h1>
+        <p style={{ textAlign: 'center', fontSize: '14px', lineHeight: 1.9, marginBottom: '16px' }}>
+          それでは、開会までに受付をされましたオブザーブの理事長の皆様をご紹介させていただきます。<br/>
+          なお、法人格名の呼称は割愛させていただきます。また、時間の都合上、拍手は最後に一括でお願いいたします。
+        </p>
 
         {attendees.length === 0 ? (
           <p style={{ textAlign: 'center', fontStyle: 'italic', color: '#94a3b8' }}>
