@@ -503,31 +503,35 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
   const generateObserversHtml = () => {
     if (checkedInMembers.length === 0) return `<p style="text-align:center; color:#64748b; font-style: italic;">Aucun observateur enregistré.</p>`;
 
-    // ふりがな行と氏名行のペアがページをまたいで分断されないよう、ページごとに
-    // 別々のテーブルとして出力し、テーブル間に明示的な改ページを入れる。
+    // ふりがな行と氏名行の組が改ページで分断されないよう、1人ごとに独立した
+    // <tbody style="page-break-inside: avoid;"> にまとめる（<tr> 単体への指定だけでは
+    // 行と行の「間」で改ページされることがあるため）。ページごとに別々のテーブルとして
+    // 出力し、テーブル間には明示的な改ページを入れる。
     const ROWS_PER_PAGE = 13;
     const pages = chunkArray(checkedInMembers, ROWS_PER_PAGE);
 
     const tables = pages.map((page, pageIndex) => {
-      const rows = page.map(p => `
-        <tr style="background-color: #c9daf8; font-size: 11px; page-break-inside: avoid;">
-          <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
-          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
-          <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
-          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
-        </tr>
-        <tr style="font-size: 15px; page-break-inside: avoid;">
-          <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
-          <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
-          <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
-          <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
-        </tr>
+      const bodies = page.map(p => `
+        <tbody style="page-break-inside: avoid;">
+          <tr style="background-color: #c9daf8; font-size: 11px;">
+            <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
+            <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
+            <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
+            <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
+          </tr>
+          <tr style="font-size: 15px;">
+            <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
+            <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
+            <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
+            <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
+          </tr>
+        </tbody>
       `).join('');
 
       const isLastPage = pageIndex === pages.length - 1;
       return `
         <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px; ${isLastPage ? '' : 'page-break-after: always;'}">
-          <tbody>${rows}</tbody>
+          ${bodies}
         </table>
       `;
     }).join('');
@@ -551,36 +555,41 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     const omiyages = checkedInMembers.filter(p => p.has_omiyage);
     if (omiyages.length === 0) return `<p style="text-align:center; color:#64748b; font-style: italic; font-size: 18px;">Aucun Omiyage enregistré pour le moment.</p>`;
 
-    // お土産情報の行が1つ多い分、1ページあたりの人数を少なめにする。
-    const ROWS_PER_PAGE = 9;
+    // お土産は1人あたり3行（ふりがな・氏名・品物）で行が高くなるため、1ページの人数を
+    // かなり少なめにする。また、3行の組を <tbody> ごとに分けて page-break-inside: avoid
+    // を指定する — <tr> 単体への指定だけでは、行と行の「間」で改ページされてしまうため
+    // （ふりがな・氏名まではページ1、お土産の行だけページ2、という分断が実際に起きていた）。
+    const ROWS_PER_PAGE = 6;
     const pages = chunkArray(omiyages, ROWS_PER_PAGE);
 
     const tables = pages.map((page, pageIndex) => {
-      const rows = page.map(p => `
-        <tr style="background-color: #c9daf8; font-size: 11px; page-break-inside: avoid;">
-          <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
-          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
-          <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
-          <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
-        </tr>
-        <tr style="font-size: 15px; page-break-inside: avoid;">
-          <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
-          <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
-          <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
-          <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
-        </tr>
-        <tr style="font-size: 16px; page-break-inside: avoid;">
-          <td colspan="4" style="border: 1px solid #000; padding: 12px; text-align: center; line-height: 1.6;">
-            より ${p.omiyage_shop || '—'} さんの<br/>
-            ${p.omiyage_item || '—'} を頂戴しております。
-          </td>
-        </tr>
+      const bodies = page.map(p => `
+        <tbody style="page-break-inside: avoid;">
+          <tr style="background-color: #c9daf8; font-size: 11px;">
+            <td style="border: 1px solid #000; padding: 4px 8px; text-align: center; width: 35%;">${p.loms?.name_kana || ''}</td>
+            <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 15%;"></td>
+            <td style="border: 1px solid #000; padding: 4px 12px; text-align: left; width: 40%;">${p.last_name_kana} ${p.first_name_kana}</td>
+            <td style="border: 1px solid #000; padding: 4px; text-align: center; width: 10%;"></td>
+          </tr>
+          <tr style="font-size: 15px;">
+            <td style="border: 1px solid #000; padding: 8px; text-align: center; font-weight: bold;">${p.loms?.name || '—'}</td>
+            <td style="border: 1px solid #000; padding: 8px; text-align: center;">理事長</td>
+            <td style="border: 1px solid #000; padding: 8px 12px; text-align: left; font-weight: bold;">${p.last_name} ${p.first_name}</td>
+            <td style="border: 1px solid #000; padding: 8px; text-align: center;">君</td>
+          </tr>
+          <tr style="font-size: 16px;">
+            <td colspan="4" style="border: 1px solid #000; padding: 12px; text-align: center; line-height: 1.6;">
+              より ${p.omiyage_shop || '—'} さんの<br/>
+              ${p.omiyage_item || '—'} を頂戴しております。
+            </td>
+          </tr>
+        </tbody>
       `).join('');
 
       const isLastPage = pageIndex === pages.length - 1;
       return `
         <table style="width: 100%; border-collapse: collapse; border: 2px solid #000; font-family: 'Meiryo', 'Yu Gothic', sans-serif; margin-bottom: 32px; ${isLastPage ? '' : 'page-break-after: always;'}">
-          <tbody>${rows}</tbody>
+          ${bodies}
         </table>
       `;
     }).join('');
