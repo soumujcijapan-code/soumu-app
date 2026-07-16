@@ -218,29 +218,6 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     });
   }, [roster, attendanceMap]);
 
-  // 予約済みの座席（受付済みかどうかを問わない）— 自動提案が他人の予約席を
-  // 誤って提案しないようにするため、checked_in の有無に関わらず除外する。
-  const reservedSeats = useMemo(() => {
-    const taken = new Set<string>();
-    Object.values(attendanceMap).forEach((a: Attendance) => {
-      if (a.assigned_seat) taken.add(a.assigned_seat.trim().toUpperCase());
-    });
-    return taken;
-  }, [attendanceMap]);
-
-  const nextAutomaticSeat = useMemo(() => {
-    if (activeMeeting?.seating_strategy === 'SUMMER_CON') {
-      // 選択中の理事長のLOMが属するブロック／地区に確保ゾーンがあれば、まずそこから提案する
-      // （未登録の理事長でも、自分のブロックの確保枠をちゃんと使えるようにするため）。
-      // 該当がなければ、列Aが空の「当日飛び入り」共通プールにフォールバックする。
-      const block = selectedParticipant?.loms?.block;
-      const region = selectedParticipant?.loms?.region;
-      const blockPool = (block && blockPresidentPools[block]) || (region && blockPresidentPools[region]) || null;
-      const pool = (blockPool || walkInPresidentPool).map(n => String(n));
-      return pool.find(seat => !reservedSeats.has(seat)) || (blockPool ? '満席（ブロック確保枠なし）' : '満席（飛び入り枠なし）');
-    }
-    return ALL_SEATS.find(seat => !reservedSeats.has(seat)) || '満席';
-  }, [ALL_SEATS, reservedSeats, activeMeeting, walkInPresidentPool, blockPresidentPools, selectedParticipant]);
   // ---------------- MOTEURS DE RECHERCHE ----------------
   const candidates = useMemo(() => {
     if (appliedSearch.trim().length < 1) return [];
@@ -310,7 +287,43 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     setLoading(true);
 
     const isSeatedMeeting = activeMeeting.seating_strategy === 'KYOTO_FIXED' || activeMeeting.seating_strategy === 'SUMMER_CON';
-    let finalSeat = mode === 'ZOOM' ? 'Distanciel' : (isSeatedMeeting && specificSeatInput.trim() ? specificSeatInput.trim().toUpperCase() : nextAutomaticSeat);
+
+    let finalSeat: string;
+    if (mode === 'ZOOM') {
+      finalSeat = 'Distanciel';
+    } else if (isSeatedMeeting && specificSeatInput.trim()) {
+      // 事前にトポロジーで確保されていた座席（LOM名／ブロック確保）はそのまま使う。
+      finalSeat = specificSeatInput.trim().toUpperCase();
+    } else {
+      // 当日飛び入りの空席探し：ボタンを押したこの瞬間に、サーバーへ直接問い合わせて
+      // 最新の予約状況を取得する。ローカルにキャッシュされた状態には一切頼らない —
+      // 複数端末が同時に検索・選択していても、書き込み直前の最新状態だけを見て決める。
+      try {
+        const { data: freshAttendances, error: freshError } = await supabase
+          .from('attendances')
+          .select('assigned_seat')
+          .eq('meeting_id', activeMeeting.id)
+          .not('assigned_seat', 'is', null);
+        if (freshError) throw freshError;
+
+        const freshReserved = new Set((freshAttendances || []).map((a: any) => (a.assigned_seat || '').toUpperCase()));
+
+        let pool: string[];
+        if (isSeatedMeeting && activeMeeting.seating_strategy === 'SUMMER_CON') {
+          const block = selectedParticipant.loms?.block;
+          const region = selectedParticipant.loms?.region;
+          const blockPool = (block && blockPresidentPools[block]) || (region && blockPresidentPools[region]) || null;
+          pool = (blockPool ? blockPool : walkInPresidentPool).map(n => String(n));
+        } else {
+          pool = ALL_SEATS;
+        }
+        finalSeat = pool.find(seat => !freshReserved.has(seat)) || '満席';
+      } catch (err: any) {
+        alert(`座席の確認に失敗しました： ${err.message}`);
+        setLoading(false);
+        return;
+      }
+    }
 
     const attendancePayload = {
       meeting_id: activeMeeting.id,
@@ -492,7 +505,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
 
     // ふりがな行と氏名行のペアがページをまたいで分断されないよう、ページごとに
     // 別々のテーブルとして出力し、テーブル間に明示的な改ページを入れる。
-    const ROWS_PER_PAGE = 15;
+    const ROWS_PER_PAGE = 13;
     const pages = chunkArray(checkedInMembers, ROWS_PER_PAGE);
 
     const tables = pages.map((page, pageIndex) => {
@@ -520,7 +533,10 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
     }).join('');
 
     return `
-      <h1 style="text-align: center; font-size: 20px; margin-bottom: 20px; font-family: 'Meiryo', 'Yu Gothic', sans-serif;">登録者・オブザーバーリスト</h1>
+      <p style="text-align: center; font-size: 14px; line-height: 1.9; margin-bottom: 16px; font-family: 'Meiryo', 'Yu Gothic', sans-serif;">
+        それでは、開会までに受付をされましたオブザーブの理事長の皆様をご紹介させていただきます。<br/>
+        なお、法人格名の呼称は割愛させていただきます。また、時間の都合上、拍手は最後に一括でお願いいたします。
+      </p>
       ${tables}
       <p style="text-align: center; font-size: 15px; font-weight: bold; font-family: 'Meiryo', 'Yu Gothic', sans-serif; letter-spacing: 0.5px; margin-top: 24px; line-height: 2;">
         以上、開会までに受付をお済になられました理事長の皆様のご紹介とさせていただきます。<br/>
@@ -586,7 +602,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
       printWindow.document.write(`
         <html>
           <head>
-            <title>${printPreview.title}</title>
+            <title> </title>
             <style>
               body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #0f172a; }
               table, tr, td {
@@ -596,7 +612,7 @@ export const CheckInConsole: React.FC<Props> = ({ activeMeeting, activeYear }) =
               }
               @media print {
                 body { padding: 0; }
-                @page { margin: 1.5cm; }
+                @page { margin: 1cm; }
                 table, tr, td {
                   -webkit-print-color-adjust: exact !important;
                   print-color-adjust: exact !important;
