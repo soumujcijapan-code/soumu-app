@@ -1,9 +1,9 @@
 // src/types.ts
 
-export type JciMeetingType = 'SEIFUKU_1' | 'SEIFUKU_2' | 'JOUNIN' | 'RIJIKAI';
+// Seul le 理事会 est géré désormais (正副会議①② / 常任理事会 supprimés).
+export type JciMeetingType = 'RIJIKAI';
 export type SeatingStrategy = 'STANDARD' | 'KYOTO_FIXED' | 'SUMMER_CON';
 
-// Inscription indispensable pour le Dashboard v2
 export interface MeetingCycle {
   id: string;
   year: number;
@@ -23,36 +23,26 @@ export interface Meeting {
   phone: string | null;
   responsible_person: string;
   meeting_date: string;
-  soumu_check_date: string | null;
-  link_check_1_date: string | null;
-  link_check_2_date: string | null;
   seating_strategy: SeatingStrategy;
   is_closed: boolean;
   created_at: string;
 }
 
-// Contrat requis par l'ActionCalendar pour indexer les jalons
-export interface CalendarEvent {
-  date: string;
-  title: string;
-  type: 'MEETING' | 'SOUMU_CHECK' | 'LINK_CHECK_1' | 'LINK_CHECK_2';
-  meetingType: JciMeetingType;
-}
-
 // --- CONTRATS POUR LE REGISTRE DES DÉLÉGATIONS (MEIBO) ---
 
+// Un LOM existe une fois PAR année (mandate_year) : 席次, ふりがな, ブロック
+// et 地区 sont propres à chaque année et ne s'écrasent plus entre 2026 et 2027.
 export interface Lom {
   id: number;
   name: string;
   name_kana: string;
   sort_priority: number;
-  block?: string;  // Identifiant géographique large (ex: Kanto)
-  region?: string; // Sous-identifiant géographique (ex: Kanagawa)
+  mandate_year: number;
+  block?: string;
+  region?: string;
 }
 
-// Identité pure d'un délégué, valable pour toute l'année (mandate_year).
-// Ne contient PLUS aucune donnée d'émargement : celle-ci est désormais
-// scoppée par réunion dans la table `attendances` (voir plus bas).
+// Identité d'un délégué pour UNE année (unique sur auth_id + mandate_year).
 export interface Participant {
   id: string;
   auth_id: string;
@@ -65,7 +55,7 @@ export interface Participant {
   loms?: Lom;
 }
 
-// --- CONTRAT POUR LE REGISTRE D'ÉMARGEMENT (une ligne par participant PAR réunion) ---
+// --- REGISTRE D'ÉMARGEMENT (une ligne par participant PAR réunion) ---
 
 export interface Attendance {
   id: string;
@@ -76,17 +66,14 @@ export interface Attendance {
   has_omiyage: boolean;
   omiyage_shop: string | null;
   omiyage_item: string | null;
-  assigned_seat: string | null;      // Siège individuel (président) — KYOTO_FIXED / SUMMER_CON
-  member_seat_range: string | null;  // Zone collective (membres escorte) — SUMMER_CON
-  lom_members_count: number | null;  // Nombre de membres accompagnants déclarés — SUMMER_CON
+  assigned_seat: string | null;
+  member_seat_range: string | null;
+  lom_members_count: number | null;
   created_at: string;
   updated_at: string;
 }
 
-// --- CONTRAT POUR LE PLAN DE SALLE BRUT (座席プラン) ---
-// Reflète les règles du CSV telles quelles, indépendamment de qui occupe réellement
-// chaque siège — nécessaire pour afficher les places "prévues mais non réservées" (blanc)
-// dans le plan de salle.
+// --- PLAN DE SALLE BRUT (座席プラン) ---
 
 export type SeatPlanRole = 'PRESIDENT' | 'MEMBER';
 export type SeatPlanTargetType = 'LOM' | 'BLOCK_DISTRICT' | 'NONE';
@@ -100,22 +87,4 @@ export interface SeatPlanRule {
   start_seat: string;
   end_seat: string | null;
   created_at: string;
-}
-
-// --- CONTRAT POUR LA GESTION DES ÉQUIPEMENTS (備品管理) ---
-// Indépendant des cycles de réunion : un inventaire par TYPE de réunion,
-// pas par instance datée.
-
-export type EquipmentCategory = 'SEIFUKU' | 'JOUNIN' | 'RIJIKAI' | 'SOUKAI' | 'KYOTO_KAIGI' | 'SUMMER_CON';
-export type EquipmentLocation = 'OFFICE' | 'VENUE' | 'SAITAMA_WAREHOUSE' | 'MEMBER' | 'UNKNOWN';
-
-export interface Equipment {
-  id: string;
-  category: EquipmentCategory;
-  name: string;
-  quantity: number;
-  location: EquipmentLocation;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
 }
