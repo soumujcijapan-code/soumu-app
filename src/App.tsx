@@ -1,21 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { CycleDetails } from './components/CycleDetails';
 import { CheckInConsole } from './components/CheckInConsole';
 import { SystemSettings } from './components/SystemSettings';
-import { EquipmentManager } from './components/EquipmentManager.tsx';
 import { supabase } from './supabaseClient';
 import type { Meeting } from './types';
-import { LayoutDashboard, Settings, Package } from 'lucide-react';
+import { LayoutDashboard, Settings } from 'lucide-react';
 
-type ActiveScreen = 'dashboard' | 'cycle-details' | 'operation-hub' | 'settings' | 'equipment';
+type ActiveScreen = 'dashboard' | 'cycle-details' | 'operation-hub' | 'settings';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ActiveScreen>('dashboard');
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
   const [activeMeeting, setActiveMeeting] = useState<Meeting | null>(null);
   const [loadingOperation, setLoadingOperation] = useState(false);
-  const [managementYear, setManagementYear] = useState(2026);
+  // 最後に選択した年度を記憶し、次回起動時の初期値にする（なければ今年）。
+  const YEAR_STORAGE_KEY = 'soumu_management_year';
+  const [managementYear, setManagementYear] = useState<number>(() => {
+    try {
+      const saved = parseInt(localStorage.getItem(YEAR_STORAGE_KEY) || '', 10);
+      if (!isNaN(saved)) return saved;
+    } catch { /* localStorage indisponible */ }
+    return new Date().getFullYear();
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(YEAR_STORAGE_KEY, String(managementYear)); } catch { /* ignore */ }
+  }, [managementYear]);
 
   /**
    * Sélectionne un cycle et bascule sur la vue de détails.
@@ -197,26 +208,6 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setCurrentScreen('equipment')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  backgroundColor: currentScreen === 'equipment' ? '#e0f2fe' : 'transparent',
-                  color: currentScreen === 'equipment' ? '#00A3E0' : '#475569'
-                }}
-              >
-                <Package className="w-4 h-4" />
-                <span>備品管理</span>
-              </button>
-
-              <button
                 onClick={() => setCurrentScreen('settings')}
                 style={{
                   display: 'flex',
@@ -300,10 +291,6 @@ export default function App() {
 
         {currentScreen === 'settings' && (
           <SystemSettings activeYear={managementYear} />
-        )}
-
-        {currentScreen === 'equipment' && (
-          <EquipmentManager />
         )}
       </main>
     </div>
