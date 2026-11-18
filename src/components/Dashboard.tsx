@@ -138,7 +138,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
               <h3 style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: '900', color: '#0B1F3A' }}>{cycle.title}</h3>
               <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
                 {rijikaiMeeting
-                  ? `📅 ${rijikaiMeeting.meeting_date} ・ 📍 ${rijikaiMeeting.location_name}`
+                  ? ` ${rijikaiMeeting.meeting_date} ・  ${rijikaiMeeting.location_name}`
                   : '理事会が未登録です'}
               </p>
               <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', fontSize: '13px', color: '#00A3E0', fontWeight: 'bold' }}>
@@ -161,7 +161,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
           <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '32px', width: '720px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0B1F3A', paddingBottom: '16px', marginBottom: '24px' }}>
-              <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '18px', fontWeight: '900' }}>🏗️ 理事会の作成（{managementYear}年度）</h3>
+              <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '18px', fontWeight: '900' }}> 理事会の作成（{managementYear}年度）</h3>
               <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
 
@@ -186,7 +186,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
               </div>
 
               <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-                <label style={{ ...labelStyle, color: '#0369a1' }}>🎫 受付プロトコル</label>
+                <label style={{ ...labelStyle, color: '#0369a1' }}>受付プロトコル</label>
                 <select
                   value={strategy}
                   onChange={e => setStrategy(e.target.value as SeatingStrategy)}
@@ -229,7 +229,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
                   キャンセル
                 </button>
                 <button type="submit" disabled={loading} style={{ padding: '10px 24px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0, 163, 224, 0.25)' }}>
-                  {loading ? '登録処理中...' : `⚡ ${cycleTitle} を作成`}
+                  {loading ? '登録処理中...' : ` ${cycleTitle} を作成`}
                 </button>
               </div>
             </form>
