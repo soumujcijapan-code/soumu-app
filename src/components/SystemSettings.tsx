@@ -105,7 +105,11 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
   };
 
   const fetchLoms = async () => {
-    const { data, error } = await supabase.from('loms').select('*').order('sort_priority', { ascending: true });
+    const { data, error } = await supabase
+      .from('loms')
+      .select('*')
+      .eq('mandate_year', activeYear)
+      .order('sort_priority', { ascending: true });
     if (data && !error) setLoms(data);
   };
 
@@ -113,6 +117,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
     const { data, error } = await supabase
       .from('meetings')
       .select('id, type, location_name, meeting_date, seating_strategy, meeting_cycles!inner(year, title)')
+      .eq('type', 'RIJIKAI')
       .eq('seating_strategy', 'SUMMER_CON')
       .eq('meeting_cycles.year', activeYear);
 
@@ -125,9 +130,12 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
     setTargetMeetingId(data && data.length === 1 ? data[0].id : '');
   };
 
+  // 年度を切り替えたら、その年度のLOM（席次）だけを読み込み直す
   useEffect(() => {
     fetchLoms();
-  }, []);
+    setSelectedLom(null);
+    setSearchTerm('');
+  }, [activeYear]);
 
   useEffect(() => {
     fetchSummerMeetings();
@@ -137,6 +145,13 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 年度の取り違え防止（2027年度の名簿を2026年度に入れてしまう事故を防ぐ）
+    const ok = window.confirm(`「${file.name}」を【${activeYear}年度】の名簿として取り込みます。\n\n年度は正しいですか？（違う場合は「キャンセル」を押し、画面上部の「年度」を切り替えてください）`);
+    if (!ok) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     setLoading(true);
     setLogs([]);
@@ -183,19 +198,24 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
         });
       }
 
-      addLog(`${lomsMap.size} 件のLOMを登録しています...`);
+      addLog(`${activeYear}年度のLOM ${lomsMap.size} 件を登録しています...`);
+      // LOMは年度ごとに別レコード（name + mandate_year で一意）。
+      // sort_priority は送らない：新規LOMはDBの既定値50、既存LOMは設定済みの席次を維持する。
       const lomsToInsert = Array.from(lomsMap.entries()).map(([name, data]) => ({
         name,
+        mandate_year: activeYear,
         name_kana: data.kana,
         block: data.block,
         region: data.region,
-        sort_priority: 50
       }));
 
-      const { error: lomError } = await supabase.from('loms').upsert(lomsToInsert, { onConflict: 'name' });
+      const { error: lomError } = await supabase.from('loms').upsert(lomsToInsert, { onConflict: 'name, mandate_year' });
       if (lomError) throw lomError;
 
-      const { data: dbLoms, error: fetchError } = await supabase.from('loms').select('id, name');
+      const { data: dbLoms, error: fetchError } = await supabase
+        .from('loms')
+        .select('id, name')
+        .eq('mandate_year', activeYear);
       if (fetchError || !dbLoms) throw fetchError;
       const lomIdMap = new Map(dbLoms.map(l => [l.name, l.id]));
 
@@ -523,10 +543,14 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
   };
 
   const handleResetPriorities = async () => {
-    const confirm = window.confirm('⚠️ すべての席次設定をリセットしますか？');
+    const confirm = window.confirm(`⚠️ ${activeYear}年度の席次設定をすべてリセットしますか？（他の年度には影響しません）`);
     if (!confirm) return;
     setPriorityLoading(true);
-    const { error } = await supabase.from('loms').update({ sort_priority: 50 }).neq('sort_priority', 50);
+    const { error } = await supabase
+      .from('loms')
+      .update({ sort_priority: 50 })
+      .eq('mandate_year', activeYear)
+      .neq('sort_priority', 50);
     if (error) alert(`エラー： ${error.message}`);
     else { await fetchLoms(); alert('席次設定をリセットしました。'); }
     setPriorityLoading(false);
@@ -545,15 +569,15 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
 
         {/* BLOC 1 : IMPORTATION DU MEIBO */}
         <div style={{ backgroundColor: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#334155', fontWeight: '900' }}>📥 年度別名簿の取り込み</h3>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', color: '#334155', fontWeight: '900' }}>📥 名簿の取り込み（<span style={{ color: '#00A3E0' }}>{activeYear}年度</span>）</h3>
 
           <p style={{ fontSize: '13px', color: '#475569', marginBottom: '20px', lineHeight: 1.5 }}>
-            選択した年度のCSV名簿（Meibo）を取り込みます。すべてのLOMと理事長がここに登録されます。
+            <strong>{activeYear}年度</strong>のCSV名簿（Meibo）を取り込みます。理事長・LOMは年度ごとに別々に保存されるため、他の年度のデータは上書きされません。
           </p>
 
           <input type="file" accept=".csv" ref={fileInputRef} onChange={handleFileUpload} disabled={loading || summerLoading} style={{ display: 'none' }} id="meibo-upload" />
           <label htmlFor="meibo-upload" style={{ display: 'block', textAlign: 'center', padding: '14px 24px', backgroundColor: loading ? '#94a3b8' : '#00A3E0', color: '#fff', borderRadius: '8px', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s', marginTop: 'auto' }}>
-            {loading ? '取り込み中...' : '📁 名簿をアップロード（CSV）'}
+            {loading ? '取り込み中...' : `📁 ${activeYear}年度の名簿をアップロード（CSV）`}
           </label>
         </div>
 
@@ -597,7 +621,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
         {/* BLOC 3 : GESTIONNAIRE DE PRÉSÉANCE */}
         <div style={{ backgroundColor: '#f8fafc', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gridRow: 'span 2' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, fontSize: '16px', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '900' }}><Shield size={18} color="#d97706" /> 席次（優先順位）設定</h3>
+            <h3 style={{ margin: 0, fontSize: '16px', color: '#334155', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '900' }}><Shield size={18} color="#d97706" /> 席次設定（{activeYear}年度）</h3>
             <button onClick={handleResetPriorities} disabled={priorityLoading} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 'bold' }} title="年度更新時のリセット用"><RotateCcw size={14}/> リセット</button>
           </div>
 
