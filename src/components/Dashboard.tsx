@@ -1,17 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import type { MeetingCycle, JciMeetingType, SeatingStrategy } from '../types';
+import type { MeetingCycle, SeatingStrategy } from '../types';
 
 interface DashboardProps {
   onSelectCycle: (cycleId: string) => void;
   managementYear: number;
 }
 
-const PART_LABELS: Record<JciMeetingType, string> = {
-  SEIFUKU_1: '正副会議 ①',
-  SEIFUKU_2: '正副会議 ②',
-  JOUNIN: '常任理事会',
-  RIJIKAI: '理事会',
+type RijikaiForm = {
+  location_name: string;
+  address: string;
+  phone: string;
+  meeting_date: string;
+  responsible_person: string;
+};
+
+const DEFAULT_RIJIKAI: RijikaiForm = {
+  location_name: 'Grand Hall',
+  address: 'Chiba Port',
+  phone: '043-ZZZ-ZZZZ',
+  meeting_date: '',
+  responsible_person: '事務局',
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementYear }) => {
@@ -21,30 +30,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
 
   const [targetMonth, setTargetMonth] = useState<number>(new Date().getMonth() + 1);
 
-  // 会議名は「第N回理事会」の形式。基本は「第00回理事会」で、番号は毎回手動で入力する
-  // （自動採番はしない）。
+  // 会議名は「第N回理事会」の形式。番号は毎回手動で入力する（自動採番はしない）。
   const [boardNumber, setBoardNumber] = useState<string>('00');
   const cycleTitle = `第${boardNumber || '00'}回理事会`;
 
-  // 受付プロトコル（4つの会議すべてに共通適用）
-  const [globalStrategy, setGlobalStrategy] = useState<SeatingStrategy>('STANDARD');
-
-  // 4つの会議の初期値
-  const [parts, setParts] = useState<Record<JciMeetingType, {
-    location_name: string; address: string; phone: string; meeting_date: string;
-    soumu_check_date: string; link_check_1_date: string; link_check_2_date: string;
-    responsible_person: string;
-  }>>({
-    SEIFUKU_1: { location_name: 'LOM Office', address: 'Chiba', phone: '043-XXX-XXXX', meeting_date: '', soumu_check_date: '', link_check_1_date: '', link_check_2_date: '', responsible_person: '事務局' },
-    SEIFUKU_2: { location_name: 'LOM Office', address: 'Chiba', phone: '043-XXX-XXXX', meeting_date: '', soumu_check_date: '', link_check_1_date: '', link_check_2_date: '', responsible_person: '事務局' },
-    JOUNIN: { location_name: 'Civic Center', address: 'Chiba Central', phone: '043-YYY-YYYY', meeting_date: '', soumu_check_date: '', link_check_1_date: '', link_check_2_date: '', responsible_person: '事務局' },
-    RIJIKAI: { location_name: 'Grand Hall', address: 'Chiba Port', phone: '043-ZZZ-ZZZZ', meeting_date: '', soumu_check_date: '', link_check_1_date: '', link_check_2_date: '', responsible_person: '事務局' },
-  });
+  const [strategy, setStrategy] = useState<SeatingStrategy>('STANDARD');
+  const [rijikai, setRijikai] = useState<RijikaiForm>(DEFAULT_RIJIKAI);
 
   const fetchCycles = async () => {
     const { data, error } = await supabase
       .from('meeting_cycles')
-      .select('*')
+      .select('*, meetings ( id, type, meeting_date, location_name )')
       .eq('year', managementYear)
       .order('month', { ascending: true });
     if (data && !error) setCycles(data as MeetingCycle[]);
@@ -54,11 +50,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
     fetchCycles();
   }, [managementYear]);
 
-  const handlePartChange = (type: JciMeetingType, field: string, value: string) => {
-    setParts(prev => ({
-      ...prev,
-      [type]: { ...prev[type], [field]: value }
-    }));
+  const handleChange = (field: keyof RijikaiForm, value: string) => {
+    setRijikai(prev => ({ ...prev, [field]: value }));
+  };
+
+  const resetForm = () => {
+    setStrategy('STANDARD');
+    setBoardNumber('00');
+    setRijikai(DEFAULT_RIJIKAI);
   };
 
   const handleCreateCycle = async (e: React.FormEvent) => {
@@ -77,35 +76,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
       return;
     }
 
-    // 4つの子会議の一括登録
-    const meetingsPayload = (Object.keys(parts) as JciMeetingType[]).map(type => {
-      const p = parts[type];
-      return {
-        cycle_id: cycleData.id,
-        type: type,
-        location_name: p.location_name,
-        address: p.address || null,
-        phone: p.phone || null,
-        responsible_person: p.responsible_person,
-        meeting_date: p.meeting_date || new Date().toISOString().split('T')[0],
-        soumu_check_date: p.soumu_check_date || null,
-        // 理事会にはリンクチェック工程は存在しない
-        link_check_1_date: type === 'RIJIKAI' ? null : (p.link_check_1_date || null),
-        link_check_2_date: type === 'RIJIKAI' ? null : (p.link_check_2_date || null),
-        seating_strategy: globalStrategy,
-        is_closed: false
-      };
-    });
-
-    const { error: meetingsError } = await supabase.from('meetings').insert(meetingsPayload);
+    const { error: meetingError } = await supabase.from('meetings').insert([{
+      cycle_id: cycleData.id,
+      type: 'RIJIKAI',
+      location_name: rijikai.location_name,
+      address: rijikai.address || null,
+      phone: rijikai.phone || null,
+      responsible_person: rijikai.responsible_person,
+      meeting_date: rijikai.meeting_date,
+      seating_strategy: strategy,
+      is_closed: false,
+    }]);
 
     setLoading(false);
-    if (meetingsError) {
-      alert(`会議の登録に失敗しました： ${meetingsError.message}`);
+    if (meetingError) {
+      // サイクルだけが残らないように削除しておく
+      await supabase.from('meeting_cycles').delete().eq('id', cycleData.id);
+      alert(`理事会の登録に失敗しました： ${meetingError.message}`);
     } else {
       setShowModal(false);
-      setGlobalStrategy('STANDARD');
-      setBoardNumber('00');
+      resetForm();
       fetchCycles();
     }
   };
@@ -116,55 +106,62 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
       {/* HEADER DE SECTION */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 900, color: '#0B1F3A', letterSpacing: '0.3px' }}>会議サイクル管理</h2>
-          <p style={{ margin: '6px 0 0 0', fontSize: '14px', color: '#64748b', lineHeight: 1.6 }}>総務委員会による会議サイクルの一元管理。</p>
+          <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 900, color: '#0B1F3A', letterSpacing: '0.3px' }}>理事会管理（{managementYear}年度）</h2>
+          <p style={{ margin: '6px 0 0 0', fontSize: '14px', color: '#64748b', lineHeight: 1.6 }}>総務委員会による理事会の一元管理。</p>
         </div>
         <button
           onClick={() => setShowModal(true)}
           style={{ padding: '12px 24px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 14px rgba(0, 163, 224, 0.3)', letterSpacing: '0.3px' }}
         >
-          ＋ 新規サイクル作成
+          ＋ 新規理事会を作成
         </button>
       </div>
 
       {/* GRILLE DES CYCLES */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-        {cycles.map(cycle => (
-          <div
-            key={cycle.id}
-            onClick={() => onSelectCycle(cycle.id)}
-            style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', transition: 'transform 0.2s, border-color 0.2s, box-shadow 0.2s' }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#00A3E0'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0, 163, 224, 0.12)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'; }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: '#eef2ff', color: '#4338ca', borderRadius: '6px', fontSize: '11px', fontWeight: '800', letterSpacing: '0.3px' }}>
-                {cycle.year}年度
+        {cycles.map(cycle => {
+          const rijikaiMeeting = cycle.meetings?.find(m => m.type === 'RIJIKAI');
+          return (
+            <div
+              key={cycle.id}
+              onClick={() => onSelectCycle(cycle.id)}
+              style={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', transition: 'transform 0.2s, border-color 0.2s, box-shadow 0.2s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#00A3E0'; e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(0, 163, 224, 0.12)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'inline-block', padding: '4px 10px', backgroundColor: '#eef2ff', color: '#4338ca', borderRadius: '6px', fontSize: '11px', fontWeight: '800', letterSpacing: '0.3px' }}>
+                  {cycle.year}年度
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'bold' }}>{cycle.month}月</div>
               </div>
-              <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'bold' }}>{cycle.month}月</div>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: '900', color: '#0B1F3A' }}>{cycle.title}</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
+                {rijikaiMeeting
+                  ? `📅 ${rijikaiMeeting.meeting_date} ・ 📍 ${rijikaiMeeting.location_name}`
+                  : '理事会が未登録です'}
+              </p>
+              <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', fontSize: '13px', color: '#00A3E0', fontWeight: 'bold' }}>
+                開く →
+              </div>
             </div>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: '900', color: '#0B1F3A' }}>{cycle.title}</h3>
-            <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>正副会議①②・常任理事会・理事会の4つの会議で構成されています。</p>
-            <div style={{ marginTop: '20px', paddingTop: '12px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', fontSize: '13px', color: '#00A3E0', fontWeight: 'bold' }}>
-              サイクルを開く →
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         {cycles.length === 0 && (
           <div style={{ gridColumn: '1 / -1', backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '48px', textAlign: 'center' as any, color: '#94a3b8', fontStyle: 'italic' }}>
-            登録されている会議サイクルはまだありません。
+            {managementYear}年度の理事会はまだ登録されていません。
           </div>
         )}
       </div>
 
-      {/* MODALE POPUP D'ARMEMENT DES CYCLES */}
+      {/* MODALE DE CRÉATION */}
       {showModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(11, 31, 58, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '32px', width: '850px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '32px', width: '720px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0B1F3A', paddingBottom: '16px', marginBottom: '24px' }}>
-              <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '18px', fontWeight: '900' }}>🏗️ 月次会議サイクルの作成</h3>
+              <h3 style={{ margin: 0, color: '#0B1F3A', fontSize: '18px', fontWeight: '900' }}>🏗️ 理事会の作成（{managementYear}年度）</h3>
               <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }}>✕</button>
             </div>
 
@@ -188,12 +185,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
                 </div>
               </div>
 
-              {/* Sélecteur global du protocole d'accueil */}
               <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-                <label style={{ ...labelStyle, color: '#0369a1' }}>🎫 受付プロトコル（4つの会議に共通適用）</label>
+                <label style={{ ...labelStyle, color: '#0369a1' }}>🎫 受付プロトコル</label>
                 <select
-                  value={globalStrategy}
-                  onChange={e => setGlobalStrategy(e.target.value as SeatingStrategy)}
+                  value={strategy}
+                  onChange={e => setStrategy(e.target.value as SeatingStrategy)}
                   style={{ ...inputStyle, borderColor: '#7dd3fc', fontWeight: 'bold', color: '#0369a1' }}
                 >
                   <option value="STANDARD">スタンダード（対面／Zoom）</option>
@@ -202,44 +198,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
                 </select>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
-                <h4 style={{ margin: 0, fontSize: '13px', color: '#00A3E0', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: '900' }}>4つの会議の同時設定</h4>
-
-                {(Object.keys(parts) as JciMeetingType[]).map(type => (
-                  <div key={type} style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                    <div style={{ fontWeight: '900', fontSize: '14px', color: '#0B1F3A', marginBottom: '12px' }}>{PART_LABELS[type]}</div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px', marginBottom: '10px' }}>
-                      <input type="date" title="開催日" style={inputStyle} onChange={e => handlePartChange(type, 'meeting_date', e.target.value)} required />
-                      <input type="text" placeholder="会場名" value={parts[type].location_name} style={inputStyle} onChange={e => handlePartChange(type, 'location_name', e.target.value)} required />
-                      <input type="text" placeholder="住所" value={parts[type].address} style={inputStyle} onChange={e => handlePartChange(type, 'address', e.target.value)} />
-                      <input type="text" placeholder="電話番号" value={parts[type].phone} style={inputStyle} onChange={e => handlePartChange(type, 'phone', e.target.value)} />
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-                      <div>
-                        <span style={miniLabelStyle}>総務チェック</span>
-                        <input type="date" style={inputStyle} onChange={e => handlePartChange(type, 'soumu_check_date', e.target.value)} />
-                      </div>
-                      {type !== 'RIJIKAI' ? (
-                        <>
-                          <div>
-                            <span style={miniLabelStyle}>リンクチェック①</span>
-                            <input type="date" style={inputStyle} onChange={e => handlePartChange(type, 'link_check_1_date', e.target.value)} />
-                          </div>
-                          <div>
-                            <span style={miniLabelStyle}>リンクチェック②</span>
-                            <input type="date" style={inputStyle} onChange={e => handlePartChange(type, 'link_check_2_date', e.target.value)} />
-                          </div>
-                        </>
-                      ) : (
-                        <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#94a3b8', backgroundColor: '#f1f5f9', borderRadius: '6px', border: '1px dashed #cbd5e1' }}>
-                          ⚠️ 理事会にはリンクチェック工程はありません
-                        </div>
-                      )}
-                    </div>
+              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '32px' }}>
+                <div style={{ fontWeight: '900', fontSize: '14px', color: '#0B1F3A', marginBottom: '12px' }}>理事会</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <span style={miniLabelStyle}>開催日</span>
+                    <input type="date" style={inputStyle} value={rijikai.meeting_date} onChange={e => handleChange('meeting_date', e.target.value)} required />
                   </div>
-                ))}
+                  <div>
+                    <span style={miniLabelStyle}>責任者</span>
+                    <input type="text" style={inputStyle} value={rijikai.responsible_person} onChange={e => handleChange('responsible_person', e.target.value)} required />
+                  </div>
+                  <div>
+                    <span style={miniLabelStyle}>会場名</span>
+                    <input type="text" style={inputStyle} value={rijikai.location_name} onChange={e => handleChange('location_name', e.target.value)} required />
+                  </div>
+                  <div>
+                    <span style={miniLabelStyle}>電話番号</span>
+                    <input type="text" style={inputStyle} value={rijikai.phone} onChange={e => handleChange('phone', e.target.value)} />
+                  </div>
+                  <div style={{ gridColumn: 'span 2' }}>
+                    <span style={miniLabelStyle}>住所</span>
+                    <input type="text" style={inputStyle} value={rijikai.address} onChange={e => handleChange('address', e.target.value)} />
+                  </div>
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
@@ -247,7 +229,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectCycle, managementY
                   キャンセル
                 </button>
                 <button type="submit" disabled={loading} style={{ padding: '10px 24px', backgroundColor: '#00A3E0', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0, 163, 224, 0.25)' }}>
-                  {loading ? '登録処理中...' : `⚡ ${cycleTitle} を開始`}
+                  {loading ? '登録処理中...' : `⚡ ${cycleTitle} を作成`}
                 </button>
               </div>
             </form>
