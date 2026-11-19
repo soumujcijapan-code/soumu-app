@@ -104,6 +104,24 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
     return rows.filter(r => r.some(f => f.trim() !== ''));
   };
 
+  // CSVの文字コードを自動判定して読み込む。日本語Excelは Shift-JIS で保存することが多く、
+  // そのまま UTF-8 として読むと文字化けしたデータがDBに登録されてしまう。
+  // まず UTF-8（厳密モード）で読み、失敗したら Shift-JIS で読み直す。
+  const readCsvFile = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer();
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch {
+      text = new TextDecoder('shift_jis').decode(buffer);
+    }
+    text = text.replace(/^\uFEFF/, ''); // 先頭のBOMを除去
+    if (text.includes('\uFFFD')) {
+      throw new Error('ファイルの文字コードを判別できませんでした（文字化け）。Excelで「CSV UTF-8（コンマ区切り）」形式で保存し直してください。');
+    }
+    return text;
+  };
+
   const fetchLoms = async () => {
     const { data, error } = await supabase
       .from('loms')
@@ -158,8 +176,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
     addLog(`${activeYear}年度の名簿を読み込んでいます... ファイル：${file.name}`);
 
     try {
-      const rawText = await file.text();
-      const text = rawText.replace(/^\uFEFF/, ''); // 先頭のBOMを除去（日本語Excel対策）
+      const text = await readCsvFile(file);
       const firstLine = text.split('\n')[0] || '';
       const delimiter = detectDelimiter(firstLine);
       const csvRows = parseCSV(text, delimiter);
@@ -260,8 +277,7 @@ export const SystemSettings: React.FC<Props> = ({ activeYear }) => {
     addLog(`${activeYear}年度の座席配置エンジンを起動しています...`);
 
     try {
-      const rawText = await file.text();
-      const text = rawText.replace(/^\uFEFF/, ''); // 先頭のBOMを除去（日本語Excel対策）
+      const text = await readCsvFile(file);
       const firstLine = text.split('\n')[0] || '';
       const delimiter = detectDelimiter(firstLine);
       const csvRows = parseCSV(text, delimiter);
